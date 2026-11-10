@@ -8,9 +8,11 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 3000;
 
 // --- LIMITES MÉMOIRE / CONSOLE ---
-const MAX_SESSIONS = 10;          // sessions conservées (plus récentes d'abord)
-const MAX_STORED_LINES = 20000;   // lignes de logs conservées par session
-const MAX_REPLAY_LINES = 2000;    // lignes rejouées à une UI qui se connecte en retard
+const MAX_SESSIONS = 10;               // sessions conservées (plus récentes d'abord)
+const MAX_LOG_LINES_PER_WORKER = 5000; // lignes de logs conservées par worker / session
+const RING_CAPACITY = 5000;            // valeurs récentes conservées par métrique (percentiles)
+const MAX_HISTORY_ROWS = 1800;         // snapshots par seconde conservés par session
+const MAX_RAW_LINES_PER_WORKER = 200000; // lignes du JSON brut k6 conservées par worker
 
 const app = express();
 const httpServer = createServer(app);
@@ -25,10 +27,7 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 // --- REGISTRE & SESSIONS ---
 // Registre en mémoire pour suivre l'état de nos workers
-// Structure d'un worker : { id: string, socketId: string, status: 'AVAILABLE' | 'BUSY' }
 const workersRegistry = new Map();
-
-// Sessions de test : une seule peut être en cours à la fois
 const sessions = [];
 let currentSession = null;
 
@@ -43,6 +42,15 @@ function stamp(d) {
 function dateFr(d) {
   const dt = new Date(d);
   return `${pad(dt.getDate())}/${pad(dt.getMonth() + 1)}/${dt.getFullYear()} ${stamp(dt)}`;
+}
+
+function fmtBytes(v) {
+  if (v == null) return '—';
+  const a = Math.abs(v);
+  if (a < 1000) return `${Math.round(v)} B`;
+  if (a < 1e6) return `${(v / 1e3).toFixed(1)} kB`;
+  if (a < 1e9) return `${(v / 1e6).toFixed(1)} MB`;
+  return `${(v / 1e9).toFixed(1)} GB`;
 }
 
 function sessionOverallStatus(session) {
@@ -74,7 +82,8 @@ function sessionState(session) {
     finishedAt: session.finishedAt ? session.finishedAt.toISOString() : null,
     totalVus: session.totalVus,
     duration: session.duration,
-    linesCount: session.lines.length,
+    workerIds: [...session.workers.keys()],
+    rawTruncated: session.rawTruncated,
     workers: [...session.workers.entries()].map(([id, w]) => ({
       id,
       exitCode: w.exitCode,
@@ -94,11 +103,114 @@ function sessionsSummary() {
     totalVus: s.totalVus,
     duration: s.duration,
     workerCount: s.workers.size,
-    linesCount: s.lines.length
+    workerIds: [...s.workers.keys()],
+    rawTruncated: s.rawTruncated,
+    vusMax: vusOf(s) ? (s.metrics.get('vus') ? s.metrics.get('vus').max : 0) : 0
   }));
 }
 
-// --- SESSIONS : CRÉATION & STOCKAGE DES LOGS ---
+function vusOf(s) { return s.metrics.get('vus'); }
+
+// --- AGRÉGATION DES MÉTRIQUES k6 (stream `worker:metrics`) ---
+// Fenêtre circulaire : permet de recalculer les percentiles sur les dernières valeurs.
+class MetricAgg {
+  constructor() {
+    this.count = 0;
+    this.sum = 0;
+    this.min = Infinity;
+    this.max = -Infinity;
+    this.last = null;
+    this.rateSum = 0;   // accumulé depuis le dernier tick (seconde)
+    this.rate = 0;      // valeur du dernier tick
+    this.ring = new Float64Array(RING_CAPACITY);
+    this.ringLen = 0;
+    this.ringIdx = 0;
+  }
+
+  ingest(value, count) {
+    const weighted = value * count;
+    this.count += count;
+    this.sum += weighted;
+    if (value < this.min) this.min = value;
+    if (value > this.max) this.max = value;
+    this.last = value;
+    this.rateSum += weighted;
+    this.ring[this.ringIdx] = value;
+    this.ringIdx = (this.ringIdx + 1) % RING_CAPACITY;
+    if (this.ringLen < RING_CAPACITY) this.ringLen++;
+  }
+
+  // Copie des valeurs de la fenêtre, dans l'ordre chronologique
+  ringValues() {
+    const out = new Array(this.ringLen);
+    if (this.ringLen >= RING_CAPACITY) {
+      for (let i = 0; i < RING_CAPACITY; i++) out[i] = this.ring[(this.ringIdx + i) % RING_CAPACITY];
+    } else {
+      for (let i = 0; i < this.ringLen; i++) out[i] = this.ring[i];
+    }
+    return out;
+  }
+}
+
+function pctOf(sorted, p) {
+  if (!sorted.length) return null;
+  const idx = (sorted.length - 1) * (p / 100);
+  const lo = Math.floor(idx);
+  const hi = Math.min(sorted.length - 1, Math.ceil(idx));
+  if (lo === hi) return sorted[lo];
+  return sorted[lo] + (sorted[hi] - sorted[lo]) * (idx - lo);
+}
+
+function aggStats(agg) {
+  let p70 = null, p80 = null, p90 = null, p95 = null, p99 = null;
+  if (agg.ringLen > 0) {
+    const sorted = agg.ringValues().sort((a, b) => a - b);
+    p70 = pctOf(sorted, 70);
+    p80 = pctOf(sorted, 80);
+    p90 = pctOf(sorted, 90);
+    p95 = pctOf(sorted, 95);
+    p99 = pctOf(sorted, 99);
+  }
+  return {
+    count: agg.count,
+    rate: agg.rate,
+    avg: agg.count ? agg.sum / agg.count : null,
+    min: Number.isFinite(agg.min) ? agg.min : null,
+    max: Number.isFinite(agg.max) ? agg.max : null,
+    p70, p80, p90, p95, p99
+  };
+}
+
+// Ingestion d'un lot de points de données k6 (envoyés par le worker)
+function ingestMetrics(workerId, items) {
+  const s = currentSession;
+  if (!s || s.status !== 'RUNNING') return;
+  let raw = s.rawMetrics.get(workerId);
+  if (!raw) {
+    raw = [];
+    s.rawMetrics.set(workerId, raw);
+  }
+  for (const item of items) {
+    if (!item || typeof item.metric !== 'string' || !item.data) continue;
+    // JSON brut k6, ligne par ligne (re-téléchargeable via /api/raw-metrics)
+    if (raw.length < MAX_RAW_LINES_PER_WORKER) {
+      raw.push(JSON.stringify({ metric: item.metric, data: item.data }));
+    } else if (!s.rawTruncated) {
+      s.rawTruncated = true;
+      console.warn(`[Orchestrateur] Buffer JSON brut saturé pour ${workerId} (plafond ${MAX_RAW_LINES_PER_WORKER} lignes).`);
+    }
+    // Les lignes de métadonnées k6 (sans `value`) alimentent le brut, pas l'agrégation
+    if (typeof item.data.value !== 'number') continue;
+    let agg = s.metrics.get(item.metric);
+    if (!agg) {
+      agg = new MetricAgg();
+      s.metrics.set(item.metric, agg);
+    }
+    const count = Math.max(1, item.data.count || 1);
+    agg.ingest(Number(item.data.value) || 0, count);
+  }
+}
+// --- SESSIONS : CRÉATION, LOGS PAR WORKER, SNAPSHOTS ---
 function createSession({ totalVus, duration }) {
   const session = {
     id: `sess-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -108,8 +220,12 @@ function createSession({ totalVus, duration }) {
     totalVus,
     duration,
     workers: new Map(),   // workerId -> { exitCode, finishedAt, error }
-    pending: {},           // workerId -> fragment de ligne non terminé
-    lines: [],             // { t, seq, workerId, type, text }
+    pending: {},           // workerId -> fragment de log non terminé
+    workerLogs: new Map(),// workerId -> [ { t, type, text, seq } ]
+    metrics: new Map(),   // metric name -> MetricAgg
+    rawMetrics: new Map(), // workerId -> [ ligne JSON brute (format `--out json=` k6) ]
+    rawTruncated: false,  // le buffer brut a-t-il été tronqué (plafond mémoire) ?
+    history: [],           // snapshots par seconde
     seq: 0
   };
   sessions.unshift(session);
@@ -118,31 +234,34 @@ function createSession({ totalVus, duration }) {
   return session;
 }
 
-function pushLine(session, workerId, type, text) {
-  if (text === '') return;
+// Ajoute une ligne de log du worker et la diffuse vers la console
+function pushWorkerLine(workerId, type, text) {
+  const s = currentSession;
+  if (!s || s.status !== 'RUNNING') return;
+  const arr = s.workerLogs.get(workerId) || s.workerLogs.set(workerId, []).get(workerId);
   const t = new Date();
-  const entry = { t, seq: ++session.seq, workerId, type, text };
-  session.lines.push(entry);
-  if (session.lines.length > MAX_STORED_LINES) session.lines.shift();
+  const entry = { t: t.toISOString(), type, text, seq: ++s.seq };
+  arr.push(entry);
+  if (arr.length > MAX_LOG_LINES_PER_WORKER) arr.shift();
   io.to('dashboard').emit('ui:log', {
-    session: session.id,
+    session: s.id,
     workerId,
     type,
     text,
-    t: t.toISOString(),
+    t: entry.t,
     seq: entry.seq
   });
 }
 
 // Incrémente le tampon de ligne du worker puis pousse les lignes complètes
 function ingestLog(workerId, type, output) {
-  const session = currentSession;
-  if (!session || session.status !== 'RUNNING') return;
-  let buf = (session.pending[workerId] || '') + output;
+  const s = currentSession;
+  if (!s || s.status !== 'RUNNING') return;
+  let buf = (s.pending[workerId] || '') + output;
   const parts = buf.split(/[\r\n]+/);
   // Le dernier fragment est potentiellement incomplet : on le conserve
-  session.pending[workerId] = parts.pop();
-  for (const text of parts) pushLine(session, workerId, type, text);
+  s.pending[workerId] = parts.pop();
+  for (const text of parts) pushWorkerLine(workerId, type, text);
 }
 
 function markWorkerFinished(workerId, { exitCode = null, error = null } = {}) {
@@ -151,10 +270,10 @@ function markWorkerFinished(workerId, { exitCode = null, error = null } = {}) {
   const entry = session.workers.get(workerId);
   if (entry.finishedAt) return; // déjà clôturé (évite les doublons)
 
-  //Flush du dernier fragment de ligne non terminé de ce worker
+  // Flush du dernier fragment de ligne non terminé de ce worker
   const rest = session.pending[workerId];
   session.pending[workerId] = '';
-  if (rest) pushLine(session, workerId, 'stdout', rest);
+  if (rest) pushWorkerLine(workerId, 'stdout', rest);
 
   entry.exitCode = exitCode;
   entry.error = error || null;
@@ -173,40 +292,202 @@ function markWorkerFinished(workerId, { exitCode = null, error = null } = {}) {
   console.log(`[Orchestrateur] Worker ${workerId} : ${entry.error ? `erreur (${entry.error})` : `code de sortie ${entry.exitCode}`}`);
 }
 
-// --- RAPPORT TEXTE (téléchargeable) ---
-function buildReport(session) {
-  const W = 76;
+// Construit le snapshot par seconde diffusé vers la console (ui:metrics)
+function buildRow(s) {
+  const vus = s.metrics.get('vus');
+  const checks = s.metrics.get('checks');
+  const reqs = s.metrics.get('http_reqs');
+  const failed = s.metrics.get('http_req_failed');
+  const recv = s.metrics.get('data_received');
+  const sent = s.metrics.get('data_sent');
+  const iter = s.metrics.get('iterations');
+
+  // Taux sur la dernière seconde
+  for (const agg of s.metrics.values()) {
+    agg.rate = agg.rateSum;
+    agg.rateSum = 0;
+  }
+
+  const row = {
+    t: new Date().toISOString(),
+    vus: { current: vus ? vus.last : 0, max: vus ? vus.max : 0 },
+    checks: checks ? {
+      pct: checks.count ? (checks.sum / checks.count) * 100 : null,
+      count: checks.count
+    } : null,
+    rates: {
+      httpReq: reqs ? reqs.rate : 0,
+      httpFailed: failed ? failed.rate : 0,
+      dataReceived: recv ? recv.rate : 0,
+      dataSent: sent ? sent.rate : 0,
+      iterations: iter ? iter.rate : 0
+    },
+    failedPct: reqs && failed && reqs.count ? (failed.sum / reqs.count) * 100 : null,
+    metrics: {}
+  };
+  for (const [name, agg] of s.metrics) row.metrics[name] = aggStats(agg);
+
+  s.history.push(row);
+  if (s.history.length > MAX_HISTORY_ROWS) s.history.shift();
+  return row;
+}
+
+// Un snapshot par seconde tant qu'une session est en cours
+setInterval(() => {
+  const s = currentSession;
+  if (!s || s.status !== 'RUNNING') return;
+  const row = buildRow(s);
+  // `running: true` = flux live du test en cours (la console s'y rattache d'office)
+  io.to('dashboard').emit('ui:metrics', { session: s.id, running: true, row });
+}, 1000);
+// --- RAPPORTS (JSON + TXT) ---
+function slimRow(r) {
+  const m = {};
+  for (const [k, v] of Object.entries(r.metrics)) {
+    m[k] = {
+      count: v.count,
+      rate: v.rate,
+      avg: v.avg,
+      min: v.min,
+      max: v.max,
+      p70: v.p70,
+      p80: v.p80,
+      p90: v.p90,
+      p95: v.p95,
+      p99: v.p99
+    };
+  }
+  return {
+    t: r.t,
+    vus: r.vus.current,
+    vusMax: r.vus.max,
+    checksPct: r.checks ? r.checks.pct : null,
+    reqRate: r.rates.httpReq,
+    failedRate: r.rates.httpFailed,
+    failedPct: r.failedPct,
+    dataRecvRate: r.rates.dataReceived,
+    dataSentRate: r.rates.dataSent,
+    iterRate: r.rates.iterations,
+    metrics: m
+  };
+}
+
+function finalStats(s) {
+  const out = {};
+  for (const [name, agg] of s.metrics) out[name] = aggStats(agg);
+  return out;
+}
+
+function buildJsonReport(s) {
+  const vus = s.metrics.get('vus');
+  const reqs = s.metrics.get('http_reqs');
+  const failed = s.metrics.get('http_req_failed');
+  const recv = s.metrics.get('data_received');
+  const sent = s.metrics.get('data_sent');
+  const iter = s.metrics.get('iterations');
+  const checks = s.metrics.get('checks');
+
+  const logs = {};
+  for (const [id, arr] of s.workerLogs) {
+    logs[id] = arr.map((l) => `[${stamp(l.t)}] [${l.type.toUpperCase()}] ${l.text}`);
+  }
+
+  return {
+    format: 'k6-distributed-report',
+    version: 1,
+    session: {
+      id: s.id,
+      status: s.status,
+      overall: sessionOverallStatus(s),
+      createdAt: s.createdAt.toISOString(),
+      finishedAt: s.finishedAt ? s.finishedAt.toISOString() : null,
+      totalVus: s.totalVus,
+      duration: s.duration
+    },
+    workers: [...s.workers.entries()].map(([id, w]) => ({
+      id,
+      exitCode: w.exitCode,
+      finishedAt: w.finishedAt ? w.finishedAt.toISOString() : null,
+      error: w.error
+    })),
+    totals: {
+      vusMax: vus ? vus.max : 0,
+      httpReqs: reqs ? reqs.count : 0,
+      httpFailed: failed ? failed.sum : 0,
+      failedPct: reqs && reqs.count ? (failed.sum / reqs.count) * 100 : null,
+      dataReceived: recv ? recv.sum : 0,
+      dataSent: sent ? sent.sum : 0,
+      iterations: iter ? iter.count : 0,
+      checksPct: checks && checks.count ? (checks.sum / checks.count) * 100 : null,
+      checksCount: checks ? checks.count : 0
+    },
+    metrics: finalStats(s),
+    series: { intervalSec: 1, rows: s.history.map(slimRow) },
+    logs
+  };
+}
+
+function buildTxtReport(s) {
+  const W = 78;
   const bar = (ch = '-') => ch.repeat(W);
   const out = [];
 
   out.push(bar('='));
-  out.push('  RAPPORT DE TEST k6 DISTRIBUÉ');
+  out.push('  RAPPORT DE TEST k6 DISTRIBUÉ (résumé)');
   out.push(bar('='));
   out.push('');
   out.push('  SESSION');
-  out.push(`  Identifiant    : ${session.id}`);
-  out.push(`  Statut global  : ${session.status === 'RUNNING' ? 'EN COURS' : `TERMINÉ — ${sessionOverallStatus(session)}`}`);
-  out.push(`  Début          : ${dateFr(session.createdAt)}`);
-  out.push(`  Fin            : ${session.finishedAt ? dateFr(session.finishedAt) : '—'}`);
-  out.push(`  VUS totales    : ${session.totalVus}`);
-  out.push(`  Durée demandée : ${session.duration}`);
+  out.push(`  Identifiant    : ${s.id}`);
+  out.push(`  Statut global  : ${s.status === 'RUNNING' ? 'EN COURS' : `TERMINÉ — ${sessionOverallStatus(s)}`}`);
+  out.push(`  Début          : ${dateFr(s.createdAt)}`);
+  out.push(`  Fin            : ${s.finishedAt ? dateFr(s.finishedAt) : '—'}`);
+  out.push(`  VUS totales    : ${s.totalVus}`);
+  out.push(`  Durée demandée : ${s.duration}`);
   out.push('');
   out.push('  WORKERS');
-  if (session.workers.size === 0) {
+  if (s.workers.size === 0) {
     out.push('  (aucun worker ciblé)');
   } else {
-    for (const [id, w] of session.workers) {
+    for (const [id, w] of s.workers) {
       const res = w.error ? `erreur : ${w.error}` : `code de sortie ${w.exitCode}`;
       const fin = w.finishedAt ? ` — ${stamp(w.finishedAt)}` : '';
       out.push(`  - ${id.padEnd(28)} : ${res}${fin}`);
     }
   }
+
+  const reqs = s.metrics.get('http_reqs');
+  const failed = s.metrics.get('http_req_failed');
+  const recv = s.metrics.get('data_received');
+  const sent = s.metrics.get('data_sent');
+  const iter = s.metrics.get('iterations');
+  const checks = s.metrics.get('checks');
+
+  out.push('');
+  out.push('  RÉSUMÉ GLOBAL');
+  out.push(`  VUS max          : ${vusOf(s) ? vusOf(s).max : 0}`);
+  out.push(`  Itérations       : ${iter ? iter.count : 0}`);
+  out.push(`  Requêtes HTTP    : ${reqs ? reqs.count : 0}${failed ? ` (échecs : ${Math.round(failed.sum)}, soit ${reqs && reqs.count ? ((failed.sum / reqs.count) * 100).toFixed(2) : '—'}%)` : ''}`);
+  out.push(`  Données reçues   : ${fmtBytes(recv ? recv.sum : 0)}`);
+  out.push(`  Données envoyées : ${fmtBytes(sent ? sent.sum : 0)}`);
+  out.push(`  Checks passés    : ${checks && checks.count ? `${((checks.sum / checks.count) * 100).toFixed(2)}% (${checks.count})` : '—'}`);
+
+  out.push('');
+  out.push('  MÉTRIQUES (statistiques globales — percentiles sur les dernières valeurs)');
+  for (const [name, st] of Object.entries(finalStats(s))) {
+    out.push(
+      `  ${name.padEnd(26)} count=${String(st.count).padStart(8)}  avg=${st.avg == null ? '—' : st.avg.toFixed(2)}  min=${st.min == null ? '—' : st.min.toFixed(2)}  max=${st.max == null ? '—' : st.max.toFixed(2)}  p95=${st.p95 == null ? '—' : st.p95.toFixed(2)}  p99=${st.p99 == null ? '—' : st.p99.toFixed(2)}`
+    );
+  }
+
   out.push('');
   out.push(bar());
-  out.push(`  FLUX DE LOGS CONCATÉNÉ (${session.lines.length} ligne(s))`);
+  out.push('  LOGS PAR WORKER');
   out.push(bar());
-  for (const l of session.lines) {
-    out.push(`[${stamp(l.t)}] [${l.workerId}] [${l.type.toUpperCase()}] ${l.text}`);
+  for (const [id, arr] of s.workerLogs) {
+    out.push(`  --- ${id} ---`);
+    for (const l of arr) {
+      out.push(`  [${stamp(l.t)}] [${l.type.toUpperCase()}] ${l.text}`);
+    }
   }
   out.push(bar());
   out.push('  FIN DU RAPPORT');
@@ -214,9 +495,7 @@ function buildReport(session) {
 
   return out.join('\n');
 }
-
-// --- ENDPOINT HTTP : LANCER UN TEST DISTRIBUÉ ---
-// Reçoit le script global, les VUS totales et la durée, puis découpe le travail
+// --- ENDPOINTS HTTP ---
 app.post('/api/test/start', (req, res) => {
   const { scriptContent, totalVus, duration, envVariables } = req.body;
 
@@ -284,26 +563,24 @@ app.post('/api/test/start', (req, res) => {
   });
 });
 
-// --- ENDPOINT HTTP : ARRÊTER TOUS LES TESTS ---
 app.post('/api/test/stop', (req, res) => {
   console.log('[Orchestrateur] Demande d\'arrêt d\'urgence généralisée envoyée à tous les workers.');
   io.emit('orchestrator:stop_test');
   res.json({ message: 'Ordre d\'arrêt envoyé à l\'ensemble du réseau.' });
 });
 
-// --- ENDPOINT HTTP : LISTER LES WORKERS ---
 app.get('/api/workers', (req, res) => {
   res.json(Array.from(workersRegistry.values()));
 });
 
-// --- ENDPOINTS : SESSIONS & RAPPORT ---
 app.get('/api/test/sessions', (req, res) => {
   res.json(sessionsSummary());
 });
 
-// Renvoie le flux concaténée (horodaté + étiqueté par worker) sous forme de fichier
+// Renvoie le rapport de la session : JSON (séries + stats + logs) ou TXT (résumé)
 app.get('/api/test/report', (req, res) => {
   const id = req.query.session;
+  const fmt = String(req.query.format || 'json').toLowerCase();
   const session = id
     ? sessions.find((s) => s.id === id)
     : (currentSession || sessions[0]);
@@ -312,12 +589,39 @@ app.get('/api/test/report', (req, res) => {
     return res.status(404).json({ error: 'Aucune session de test trouvée.' });
   }
 
-  res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-  res.setHeader('Content-Disposition', `attachment; filename="k6-rapport-${session.id}.txt"`);
-  res.send(buildReport(session));
+  if (fmt === 'txt') {
+    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="k6-resume-${session.id}.txt"`);
+    return res.send(buildTxtReport(session));
+  }
+
+  res.setHeader('Content-Type', 'application/json; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="k6-rapport-${session.id}.json"`);
+  res.send(JSON.stringify(buildJsonReport(session), null, 2));
 });
 
-// --- CONSOLE WEB (fichiers statiques + events UI) ---
+// Sortie JSON BRUTE de k6 d'un worker (contenu du `--out json=`, une ligne JSON par point de données)
+app.get('/api/raw-metrics', (req, res) => {
+  const id = req.query.session;
+  const workerId = req.query.worker;
+  const session = id
+    ? sessions.find((s) => s.id === id)
+    : (currentSession || sessions[0]);
+
+  if (!session) {
+    return res.status(404).json({ error: 'Aucune session de test trouvée.' });
+  }
+
+  const lines = session.rawMetrics.get(workerId);
+  if (!workerId || !lines || lines.length === 0) {
+    return res.status(404).json({ error: 'Aucun point de données brut pour ce worker (pas de --out json= reçu).' });
+  }
+
+  res.setHeader('Content-Type', 'application/x-ndjson; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="k6-out-${session.id}-${workerId}.jsonl"`);
+  res.send(lines.join('\n') + '\n');
+});
+// --- CONSOLE WEB : events UI + GESTION DU CANAL SOCKET ---
 function handleDashboardSocket(socket) {
   socket.join('dashboard');
 
@@ -329,16 +633,27 @@ function handleDashboardSocket(socket) {
     sessions: sessionsSummary()
   });
 
-  // Rejeu des lignes déjà produites pour une UI qui se connecte en retard
+  // Rejeu pour une UI qui se connecte en plein test
   if (currentSession && currentSession.status === 'RUNNING') {
-    socket.emit('ui:logs_bulk', {
-      session: currentSession.id,
-      lines: currentSession.lines.slice(-MAX_REPLAY_LINES)
-    });
+    const workers = {};
+    for (const [id, arr] of currentSession.workerLogs) workers[id] = arr.slice(-500);
+    socket.emit('ui:logs_replay', { session: currentSession.id, workers });
+    socket.emit('ui:metrics_replay', { session: currentSession.id, rows: currentSession.history.slice(-300) });
   }
+
+  // Rejeu à la demande : l'utilisateur a sélectionné une session dans le bandeau « Rapport »
+  // → on rejoue l'historique complet (snapshots par seconde + logs par worker) de cette session.
+  socket.on('ui:show_session', ({ session }) => {
+    const s = sessions.find((x) => x.id === session);
+    if (!s) return;
+    const workers = {};
+    for (const [id, arr] of s.workerLogs) workers[id] = arr;
+    socket.emit('ui:logs_replay', { session: s.id, workers });
+    socket.emit('ui:metrics_replay', { session: s.id, rows: s.history });
+    socket.emit('ui:session_state', sessionState(s));
+  });
 }
 
-// --- GESTION DU CANAL SOCKET TEMPS RÉEL ---
 io.on('connection', (socket) => {
   const workerId = socket.handshake.auth && socket.handshake.auth.workerId;
 
@@ -352,7 +667,6 @@ io.on('connection', (socket) => {
   // --- Cas 2 : un worker (agent) s'enregistre ---
   console.log(`[Orchestrateur] Worker connecté : ${workerId} (Socket: ${socket.id})`);
 
-  // Enregistrement par défaut du worker à l'état Disponible
   workersRegistry.set(workerId, {
     id: workerId,
     socketId: socket.id,
@@ -360,7 +674,6 @@ io.on('connection', (socket) => {
   });
   broadcastWorkers();
 
-  // Événement : Le worker confirme qu'il est prêt et partage son statut initial
   socket.on('worker:ready', (data) => {
     const worker = workersRegistry.get(workerId);
     if (worker) {
@@ -370,7 +683,6 @@ io.on('connection', (socket) => {
     }
   });
 
-  // Événement : Changement de statut (ex: AVAILABLE -> BUSY au début du k6)
   socket.on('worker:status_changed', (data) => {
     const worker = workersRegistry.get(workerId);
     if (worker) {
@@ -380,7 +692,7 @@ io.on('connection', (socket) => {
     }
   });
 
-  // Événement : Réception des logs de la console k6 en temps réel
+  // Logs de console k6 (stdout / stderr) — stockés par worker, diffusés vers la console
   socket.on('worker:log', (data) => {
     const type = data.type === 'stderr' ? 'stderr' : 'stdout';
     const text = data.output || '';
@@ -388,24 +700,25 @@ io.on('connection', (socket) => {
     ingestLog(workerId, type, text);
   });
 
-  // Événement : k6 a fini son travail sur ce nœud
+  // Points de données k6 (format JSON de `--out json=`) — agrégés pour les graphiques
+  socket.on('worker:metrics', (data) => {
+    if (data && Array.isArray(data.data)) ingestMetrics(workerId, data.data);
+  });
+
   socket.on('worker:test_finished', (data) => {
     console.log(`[Orchestrateur] Le worker ${workerId} a complété son test (Code de sortie k6 : ${data.exitCode})`);
     markWorkerFinished(workerId, { exitCode: data.exitCode });
   });
 
-  // Événement : Le worker a rencontré une erreur logicielle interne
   socket.on('worker:error', (data) => {
     console.error(`[Orchestrateur][ERREUR] Signalement de ${workerId} :`, data.message);
   });
 
-  // Événement : Perte de connexion ou arrêt de l'agent
   socket.on('disconnect', () => {
     console.log(`[Orchestrateur] Worker déconnecté : ${workerId}`);
     workersRegistry.delete(workerId);
     broadcastWorkers();
     // Si le worker portait une part de la session en cours, on clôt son entrée
-    // pour que la session puisse se terminer proprement
     markWorkerFinished(workerId, { error: 'Worker déconnecté' });
   });
 });
@@ -416,3 +729,6 @@ httpServer.listen(PORT, () => {
   console.log(`[Orchestrateur] Console web disponible sur http://localhost:${PORT}`);
   console.log('[Orchestrateur] En attente de connexions de workers sur le protocole socket.io...');
 });
+
+
+

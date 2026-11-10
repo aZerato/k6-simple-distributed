@@ -127,26 +127,52 @@ node \orchestrator\test\trigger.js
 ## 5. Console web de l'Orchestrateur
 
 Dès le démarrage, l'orchestrateur sert une console web sur **`http://<IP_ORCHESTRATEUR>:3000`**
-(dossier `orchestrator/public/`). Elle permet de :
+(dossier `orchestrator/public/`, style « dashboard k6 »). Elle permet de :
 
-* **Voir en direct la concaténation des retours des tests** : chaque ligne de sortie
-  (`stdout`/`stderr`) produite par chaque worker est horodatée, étiquetée du nom du worker
-  et affichée en flux unique, en direct, via socket.io.
+* **Voir les graphiques en direct** (façon web dashboard de k6) : cartes de synthèse
+  (VUS, req/s, échecs/s, checks %, itérations/s, données reçues/envoyées) avec
+  sparklines, puis graphiques HTTP req/s + failed/s, données B/s, VUS et checks %.
+* **Explorer les métriques** : un sélecteur liste toutes les métriques produites par
+  k6 (ex. `http_req_duration`, `http_req_failed`…) ; pour chacune, le graphique
+  avg + p95 et le tableau de statistiques (count, rate, avg, p70/p80/p90/p95/p99,
+  min, max).
+* **Consulter les logs par worker** : chaque agent possède son onglet (pas de
+  concaténation) avec horodatage millisecondes et type `STDOUT`/`STDERR`.
 * **Lancer un test** (script k6, VUS totales, durée) et **arrêter** un test d'urgence,
   directement depuis l'interface.
-* **Télécharger le rapport** : le bouton « ⬇ Télécharger le rapport (.txt) » exporte le
-  flux de logs concaténé de la session, préfixé d'un en-tête (identifiant, VUS, durée,
-  code de sortie de chaque worker). Les 10 dernières sessions restent sélectionnables
-  dans le menu déroulant du bandeau « Rapport ».
+* **Télécharger le rapport** de la session :
+  * **`.json`** — le rapport complet : totaux (requêtes, échecs %, données, checks),
+    statistiques finales de toutes les métriques (percentiles inclus), les séries
+    horodatées par seconde (reconstruisables en graphiques) et les logs par worker.
+  * **`.txt`** — le résumé lisible (session, code de sortie par worker, résumé global,
+    métriques, logs).
+  * **`JSON brut k6` (`.jsonl`)** — la sortie brute du `--out json=` de chaque worker,
+    ligne par ligne (métadonnées + points de données, format JSON Lines), re-téléchargeable
+    par session **et par worker** via le sélecteur du bandeau « Rapport ».
+  
+  Les 10 dernières sessions restent sélectionnables dans le menu déroulant du
+  bandeau « Rapport ».
 * **Suivre l'état des workers** (Disponible / Occupé) en temps réel.
+
+### Métriques brutes k6 (`worker:metrics`)
+
+Pour alimenter les graphiques, le worker lance k6 avec **`--out json=<fichier
+éphémère>`** : chaque point de données k6 (une ligne JSON par requête/métrique)
+est relu ligne à ligne par le worker puis streamé vers l'orchestrateur via l'événement
+socket `worker:metrics` (`{ data: [ { metric, data: { value, count } } ] }`).
+L'orchestrateur agrège les valeurs (taux/seconde, min/max, percentiles sur fenêtre
+glissante de 5 000 valeurs) et diffuse un snapshot par seconde (`ui:metrics`) à la
+console. Les logs console de k6 continuent d'arriver via `worker:log`.
 
 ### API HTTP additionnelle (rapport & sessions)
 
 | Méthode | Route                        | Description                                                        |
 |--------|------------------------------|------------------------------------------------------------------|
-| GET    | `/api/test/sessions`         | Liste des 10 dernières sessions (statut, VUS, durée, nb de lignes) |
-| GET    | `/api/test/report`           | Rapport texte de la session en cours (ou de la dernière) — téléchargeable |
-| GET    | `/api/test/report?session=`  | Rapport texte d'une session précise (identifiant `sess-…`)        |
+| GET    | `/api/test/sessions`         | Liste des 10 dernières sessions (statut, VUS, durée, VUS max, workers) |
+| GET    | `/api/test/report`           | Rapport JSON de la session en cours (ou de la dernière)             |
+| GET    | `/api/test/report?format=txt`| Rapport texte (résumé) de la session en cours                       |
+| GET    | `/api/test/report?session=`  | Rapport d'une session précise (identifiant `sess-…`)               |
+| GET    | `/api/raw-metrics`           | Sortie JSON brute k6 d'un worker (`?session=&worker=`, JSON Lines) |
 | POST   | `/api/test/start`            | Lancement d'un test distribué (409 si un test est déjà en cours)   |
 | POST   | `/api/test/stop`             | Arrêt d'urgence de tous les tests                                  |
 
