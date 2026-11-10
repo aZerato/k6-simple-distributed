@@ -132,10 +132,15 @@ Dès le démarrage, l'orchestrateur sert une console web sur **`http://<IP_ORCHE
 * **Voir les graphiques en direct** (façon web dashboard de k6) : cartes de synthèse
   (VUS, req/s, échecs/s, checks %, itérations/s, données reçues/envoyées) avec
   sparklines, puis graphiques HTTP req/s + failed/s, données B/s, VUS et checks %.
+  Chaque graphique porte la **courbe de fusion** (tous les workers) **et une courbe
+  par worker** (en pointillés) : des **cases à cocher** sous chaque graphique
+  permettent d'afficher/masquer chaque série ; le survol affiche la valeur de toutes
+  les séries affichées à l'instant t.
 * **Explorer les métriques** : un sélecteur liste toutes les métriques produites par
   k6 (ex. `http_req_duration`, `http_req_failed`…) ; pour chacune, le graphique
-  avg + p95 et le tableau de statistiques (count, rate, avg, p70/p80/p90/p95/p99,
-  min, max).
+  avg + p95 (fusion **et une courbe avg/p95 par worker**) et le tableau de
+  statistiques (count, rate, avg, p70/p80/p90/p95/p99, min, max) avec **une ligne
+  par source** (fusion + une par worker).
 * **Consulter les logs par worker** : chaque agent possède son onglet (pas de
   concaténation) avec horodatage millisecondes et type `STDOUT`/`STDERR`.
 * **Lancer un test** (script k6 **collé** ou **pointé par un chemin `.js`**, VUS totales,
@@ -144,14 +149,18 @@ Dès le démarrage, l'orchestrateur sert une console web sur **`http://<IP_ORCHE
 * **Télécharger le rapport** de la session :
   * **`.html`** — une page **autoportée** : graphiques SVG interactifs (infobulle avec la
     valeur à l'instant t au survol) pour les séries principales **et chaque métrique**
-    (avg + p95), synthèse, tableau de **toutes les métriques** (count, rate, min, avg,
-    p70/p80/p90/p95/p99, max), et logs par worker. S'ouvre dans le navigateur, aucun
-    serveur requis.
+    (avg + p95), avec la courbe de fusion **et une courbe par worker** — des cases à
+    cocher par graphique pour afficher/masquer chaque série. Synthèse, tableau de
+    **toutes les métriques** (count, rate, min, avg, p70/p80/p90/p95/p99, max), et
+    logs par worker. S'ouvre dans le navigateur, aucun serveur requis.
   * **`.json`** — le rapport complet : totaux (requêtes, échecs %, données, checks),
     statistiques finales de toutes les métriques (percentiles inclus), les séries
-    horodatées par seconde (reconstruisables en graphiques) et les logs par worker.
-  * **`.txt`** — le résumé lisible (session, code de sortie par worker, résumé global,
-    métriques, logs).
+    horodatées par seconde (reconstruisables en graphiques, avec les valeurs **par
+    worker** dans `byWorker`), les statistiques finales **par worker**, et les logs
+    par worker.
+  * **`.txt`** — le résumé lisible (session, code de sortie par worker, **métriques par
+    worker** (VUS, requêtes, échecs, données, itérations), résumé global, métriques,
+    logs).
   * **`JSON brut k6` (`.jsonl`)** — la sortie brute du `--out json=` de chaque worker,
     ligne par ligne (métadonnées + points de données, format JSON Lines), re-téléchargeable
     par session **et par worker** via le sélecteur du bandeau « Rapport ».
@@ -167,8 +176,11 @@ Pour alimenter les graphiques, le worker lance k6 avec **`--out json=<fichier
 est relu ligne à ligne par le worker puis streamé vers l'orchestrateur via l'événement
 socket `worker:metrics` (`{ data: [ { metric, data: { value, count } } ] }`).
 L'orchestrateur agrège les valeurs (taux/seconde, min/max, percentiles sur fenêtre
-glissante de 5 000 valeurs) et diffuse un snapshot par seconde (`ui:metrics`) à la
-console. Les logs console de k6 continuent d'arriver via `worker:log`.
+glissante de 5 000 valeurs) **globalement (fusion de tous les workers) et par
+worker**, et diffuse un snapshot par seconde (`ui:metrics`) à la console : il porte
+la courbe de fusion **et une courbe par worker**, avec les cases à cocher
+d'affichage. Les VUS affichées sont la **somme des VUS actives de chaque worker**.
+Les logs console de k6 continuent d'arriver via `worker:log`.
 
 ### API HTTP additionnelle (rapport & sessions)
 

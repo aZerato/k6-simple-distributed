@@ -106,7 +106,7 @@ function sessionsSummary() {
     workerCount: s.workers.size,
     workerIds: [...s.workers.keys()],
     rawTruncated: s.rawTruncated,
-    vusMax: vusOf(s) ? (s.metrics.get('vus') ? s.metrics.get('vus').max : 0) : 0
+    vusMax: s.vusPeak || (vusOf(s) ? (s.metrics.get('vus') ? s.metrics.get('vus').max : 0) : 0)
   }));
 }
 
@@ -202,13 +202,27 @@ function ingestMetrics(workerId, items) {
     }
     // Les lignes de métadonnées k6 (sans `value`) alimentent le brut, pas l'agrégation
     if (typeof item.data.value !== 'number') continue;
+    const count = Math.max(1, item.data.count || 1);
+    const value = Number(item.data.value) || 0;
+    // Agrégat global (fusion de tous les workers)
     let agg = s.metrics.get(item.metric);
     if (!agg) {
       agg = new MetricAgg();
       s.metrics.set(item.metric, agg);
     }
-    const count = Math.max(1, item.data.count || 1);
-    agg.ingest(Number(item.data.value) || 0, count);
+    agg.ingest(value, count);
+    // Agrégat par worker : alimente les courbes par agent de la console et du rapport
+    let byW = s.metricsByWorker.get(workerId);
+    if (!byW) {
+      byW = new Map();
+      s.metricsByWorker.set(workerId, byW);
+    }
+    let wagg = byW.get(item.metric);
+    if (!wagg) {
+      wagg = new MetricAgg();
+      byW.set(item.metric, wagg);
+    }
+    wagg.ingest(value, count);
   }
 }
 // --- SESSIONS : CRÉATION, LOGS PAR WORKER, SNAPSHOTS ---
@@ -223,7 +237,9 @@ function createSession({ totalVus, duration }) {
     workers: new Map(),   // workerId -> { exitCode, finishedAt, error }
     pending: {},           // workerId -> fragment de log non terminé
     workerLogs: new Map(),// workerId -> [ { t, type, text, seq } ]
-    metrics: new Map(),   // metric name -> MetricAgg
+    metrics: new Map(),   // metric name -> MetricAgg (fusion de tous les workers)
+    metricsByWorker: new Map(), // workerId -> Map(metric name -> MetricAgg)
+    vusPeak: 0,            // plus haut niveau de VUS fusionné (somme des workers)
     rawMetrics: new Map(), // workerId -> [ ligne JSON brute (format `--out json=` k6) ]
     rawTruncated: false,  // le buffer brut a-t-il été tronqué (plafond mémoire) ?
     history: [],           // snapshots par seconde
@@ -303,15 +319,29 @@ function buildRow(s) {
   const sent = s.metrics.get('data_sent');
   const iter = s.metrics.get('iterations');
 
-  // Taux sur la dernière seconde
+  // Taux sur la dernière seconde (agrégats globaux ET par worker)
   for (const agg of s.metrics.values()) {
     agg.rate = agg.rateSum;
     agg.rateSum = 0;
   }
+  for (const mm of s.metricsByWorker.values()) {
+    for (const agg of mm.values()) {
+      agg.rate = agg.rateSum;
+      agg.rateSum = 0;
+    }
+  }
+
+  // VUS fusionnés : somme des VUS actifs de chaque worker (le « last » global
+  // tout seul ne reflétait que le dernier worker qui a émis).
+  let vusTotal = 0;
+  for (const mm of s.metricsByWorker.values()) {
+    const va = mm.get('vus');
+    if (va && va.last != null) vusTotal += va.last;
+  }
 
   const row = {
     t: new Date().toISOString(),
-    vus: { current: vus ? vus.last : 0, max: vus ? vus.max : 0 },
+    vus: { current: vusTotal, max: vus ? vus.max : 0 },
     checks: checks ? {
       pct: checks.count ? (checks.sum / checks.count) * 100 : null,
       count: checks.count
@@ -326,7 +356,25 @@ function buildRow(s) {
     failedPct: reqs && failed && reqs.count ? (failed.sum / reqs.count) * 100 : null,
     metrics: {}
   };
-  for (const [name, agg] of s.metrics) row.metrics[name] = aggStats(agg);
+  for (const [name, agg] of s.metrics) {
+    const st = aggStats(agg);
+    st.last = agg.last;
+    row.metrics[name] = st;
+  }
+
+  // Statistiques par worker (courbes par agent dans la console et le rapport)
+  row.byWorker = {};
+  for (const [wid, mm] of s.metricsByWorker) {
+    const per = {};
+    for (const [name, agg] of mm) {
+      const st = aggStats(agg);
+      st.last = agg.last; // valeur instantanée du gauge (ex: VUS actifs du worker)
+      per[name] = st;
+    }
+    row.byWorker[wid] = per;
+  }
+
+  if (vusTotal > s.vusPeak) s.vusPeak = vusTotal;
 
   s.history.push(row);
   if (s.history.length > MAX_HISTORY_ROWS) s.history.shift();
@@ -342,21 +390,31 @@ setInterval(() => {
   io.to('dashboard').emit('ui:metrics', { session: s.id, running: true, row });
 }, 1000);
 // --- RAPPORTS (JSON + TXT) ---
+// Un peu de statistiques par métrique pour les séries (lignes du rapport / JSON)
+function slimStats(v) {
+  return {
+    count: v.count,
+    rate: v.rate,
+    avg: v.avg,
+    min: v.min,
+    max: v.max,
+    p70: v.p70,
+    p80: v.p80,
+    p90: v.p90,
+    p95: v.p95,
+    p99: v.p99,
+    last: v.last != null ? v.last : null
+  };
+}
+
 function slimRow(r) {
   const m = {};
-  for (const [k, v] of Object.entries(r.metrics)) {
-    m[k] = {
-      count: v.count,
-      rate: v.rate,
-      avg: v.avg,
-      min: v.min,
-      max: v.max,
-      p70: v.p70,
-      p80: v.p80,
-      p90: v.p90,
-      p95: v.p95,
-      p99: v.p99
-    };
+  for (const [k, v] of Object.entries(r.metrics)) m[k] = slimStats(v);
+  const bw = {};
+  for (const [k, mm] of Object.entries(r.byWorker || {})) {
+    const per = {};
+    for (const [mk, v] of Object.entries(mm)) per[mk] = slimStats(v);
+    bw[k] = per;
   }
   return {
     t: r.t,
@@ -369,14 +427,23 @@ function slimRow(r) {
     dataRecvRate: r.rates.dataReceived,
     dataSentRate: r.rates.dataSent,
     iterRate: r.rates.iterations,
-    metrics: m
+    metrics: m,
+    byWorker: bw
   };
 }
 
-function finalStats(s) {
+function finalStatsOf(mm) {
   const out = {};
-  for (const [name, agg] of s.metrics) out[name] = aggStats(agg);
+  for (const [name, agg] of mm) {
+    const st = aggStats(agg);
+    st.last = agg.last;
+    out[name] = st;
+  }
   return out;
+}
+
+function finalStats(s) {
+  return finalStatsOf(s.metrics);
 }
 
 function buildJsonReport(s) {
@@ -411,8 +478,9 @@ function buildJsonReport(s) {
       finishedAt: w.finishedAt ? w.finishedAt.toISOString() : null,
       error: w.error
     })),
+    byWorker: [...s.metricsByWorker.entries()].map(([id, mm]) => ({ id, metrics: finalStatsOf(mm) })),
     totals: {
-      vusMax: vus ? vus.max : 0,
+      vusMax: s.vusPeak || (vus ? vus.max : 0),
       httpReqs: reqs ? reqs.count : 0,
       httpFailed: failed ? failed.sum : 0,
       failedPct: reqs && reqs.count ? (failed.sum / reqs.count) * 100 : null,
@@ -479,6 +547,20 @@ function buildTxtReport(s) {
       `  ${name.padEnd(26)} count=${String(st.count).padStart(8)}  avg=${st.avg == null ? '—' : st.avg.toFixed(2)}  min=${st.min == null ? '—' : st.min.toFixed(2)}  max=${st.max == null ? '—' : st.max.toFixed(2)}  p95=${st.p95 == null ? '—' : st.p95.toFixed(2)}  p99=${st.p99 == null ? '—' : st.p99.toFixed(2)}`
     );
   }
+
+  out.push('');
+  out.push('  MÉTRIQUES PAR WORKER');
+  for (const [wid, mm] of s.metricsByWorker) {
+    const reqsW = mm.get('http_reqs');
+    const failedW = mm.get('http_req_failed');
+    const recvW = mm.get('data_received');
+    const iterW = mm.get('iterations');
+    const vusW = mm.get('vus');
+    out.push(`  --- ${wid} ---`);
+    out.push(`    VUS max : ${Math.round(vusW && vusW.last != null ? vusW.last : 0)}   Requêtes : ${reqsW ? Math.round(reqsW.count) : 0}   Échecs : ${failedW ? Math.round(failedW.sum) : 0}`);
+    out.push(`    Données reçues : ${fmtBytes(recvW ? recvW.sum : 0)}   Itérations : ${iterW ? Math.round(iterW.count) : 0}`);
+  }
+  if (s.metricsByWorker.size === 0) out.push('  (aucun point de données reçu)');
 
   out.push('');
   out.push(bar());
@@ -681,8 +763,10 @@ function niceMaxH(v) {
   return (d <= 1 ? 1 : d <= 2 ? 2 : d <= 5 ? 5 : 10) * e;
 }
 
-// Un graphique SVG statique (grille + axes + une polyligne par série).
-// Renvoie { svg, data } : data alimente le survol (crosshair + infobulle).
+// Un graphique du rapport : grille + axes rendus côté serveur ; les courbes
+// (une par série) sont tracées par le JS embarqué à partir de `data`, afin que
+// les cases à cocher (Fusion / chaque worker) affichent-masquent chaque série.
+// Renvoie { svg, data } : data alimente le rendu, le survol (crosshair + infobulle).
 function svgChart(times, seriesList) {
   const W = 880, H = 170, pL = 50, pR = 14, pT = 12, pB = 24;
   const iw = W - pL - pR, ih = H - pT - pB;
@@ -693,7 +777,6 @@ function svgChart(times, seriesList) {
   const top = niceMaxH(max);
 
   const X = (i) => pL + (n === 1 ? iw / 2 : (i / (n - 1)) * iw);
-  const Y = (v) => pT + ih - (v / top) * ih;
   const axisLbl = (v) => (v >= 1e6 ? (v / 1e6).toFixed(1) + 'M' : v >= 1e3 ? (v / 1e3).toFixed(1) + 'k' : v % 1 ? v.toFixed(1) : String(v));
   const tLbl = (iso) => new Date(iso).toLocaleTimeString('fr-FR');
 
@@ -708,16 +791,8 @@ function svgChart(times, seriesList) {
       g += `<text x="${X(i).toFixed(1)}" y="${H - 8}" class="ax" text-anchor="middle">${htmlEsc(tLbl(times[i]))}</text>`;
     }
   }
-  const paths = seriesList.map((s) => {
-    let d = '';
-    s.values.forEach((v, i) => {
-      if (v == null || !isFinite(v)) return;
-      d += (d ? ' L' : 'M') + `${X(i).toFixed(1)} ${Y(v).toFixed(1)}`;
-    });
-    return `<path d="${d}" stroke="${s.color}" fill="none" stroke-width="1.8"/>`;
-  }).join('');
-  const svg = `<svg viewBox="0 0 ${W} ${H}" width="100%">${g}${paths}<line class="crs" x1="0" y1="${pT}" x2="0" y2="${pT + ih}" style="display:none"/></svg>`;
-  return { svg, data: { times, series: seriesList.map((s) => ({ name: s.name, fmt: s.fmt, values: s.values })) } };
+  const svg = `<svg viewBox="0 0 ${W} ${H}" width="100%">${g}<line class="crs" x1="0" y1="${pT}" x2="0" y2="${pT + ih}" style="display:none"/></svg>`;
+  return { svg, data: { times, top, series: seriesList.map((s) => ({ name: s.name, color: s.color, fmt: s.fmt, dash: s.dash || null, values: s.values })) } };
 }
 
 function buildHtmlReport(s) {
@@ -726,30 +801,59 @@ function buildHtmlReport(s) {
   const times = rows.map((r) => r.t);
   const M = (k) => rows.map((r) => (r.metrics[k] ? r.metrics[k].avg : null));
   const Mp = (k) => rows.map((r) => (r.metrics[k] ? r.metrics[k].p95 : null));
+  const hasMetric = (k) => !!rep.metrics[k];
+
+  // Couleurs des courbes par worker (distinctes des couleurs « fusion »)
+  const WPAL = ['#c084fc', '#45e3ff', '#ff8fa3', '#a3e635', '#f0abfc', '#ffd166'];
+  const wcolor = (i) => WPAL[i % WPAL.length];
+
+  // Workers ayant produit des points, dans l'ordre de la session
+  const present = new Set();
+  for (const r of rows) for (const id of Object.keys(r.byWorker || {})) present.add(id);
+  const workerIds = rep.workers.map((w) => w.id).filter((id) => present.has(id));
+
+  // Une série par worker ; filtrée si ce worker n'a jamais émis la métrique
+  const allNull = (arr) => arr.every((v) => v == null || !isFinite(v));
+  const wSeries = (label, fmt, getter, dash) => workerIds.map((id, i) => {
+    const values = rows.map((r) => {
+      const bw = (r.byWorker || {})[id];
+      const v = getter(bw);
+      return v == null || !isFinite(v) ? null : v;
+    });
+    return { name: `${id} · ${label}`, color: wcolor(i), fmt, values, dash: dash || null };
+  }).filter((sr) => !allNull(sr.values));
 
   const charts = [
-    { title: 'VUS', list: [{ name: 'VUS actifs', color: '#46e5b1', fmt: 'int', values: rows.map((r) => r.vus) }] },
+    { title: 'VUS', list: [
+      { name: 'VUS actifs (fusion)', color: '#46e5b1', fmt: 'int', values: rows.map((r) => r.vus) },
+      ...wSeries('VUS', 'int', (bw) => (bw && bw.vus ? bw.vus.last : null)) ] },
     { title: 'HTTP req/s', list: [
-      { name: 'req/s', color: '#46e5b1', fmt: 'int', values: rows.map((r) => r.reqRate) },
-      { name: 'failed/s', color: '#ff5c5c', fmt: 'int', values: rows.map((r) => r.failedRate) }] },
+      { name: 'req/s (fusion)', color: '#46e5b1', fmt: 'int', values: rows.map((r) => r.reqRate) },
+      { name: 'failed/s (fusion)', color: '#ff5c5c', fmt: 'int', values: rows.map((r) => r.failedRate) },
+      ...wSeries('req/s', 'int', (bw) => (bw && bw.http_reqs ? bw.http_reqs.rate : null)) ] },
     { title: 'Données (B/s)', list: [
-      { name: 'reçues', color: '#5eb1ff', fmt: 'bps', values: rows.map((r) => r.dataRecvRate) },
-      { name: 'envoyées', color: '#ffb224', fmt: 'bps', values: rows.map((r) => r.dataSentRate) }] },
-    { title: 'Checks passés (%)', list: [
-      { name: 'checks %', color: '#46e5b1', fmt: 'pct', values: rows.map((r) => r.checksPct) }] },
-    { title: 'Échecs (%)', list: [
-      { name: 'failed %', color: '#ff5c5c', fmt: 'pct', values: rows.map((r) => r.failedPct) }] },
-    { title: 'Itérations/s', list: [
-      { name: 'itér./s', color: '#46e5b1', fmt: 'int', values: rows.map((r) => r.iterRate) }] }
+      { name: 'reçues (fusion)', color: '#5eb1ff', fmt: 'bps', values: rows.map((r) => r.dataRecvRate) },
+      { name: 'envoyées (fusion)', color: '#ffb224', fmt: 'bps', values: rows.map((r) => r.dataSentRate) },
+      ...wSeries('reçues', 'bps', (bw) => (bw && bw.data_received ? bw.data_received.rate : null)) ] },
+    ...(hasMetric('checks') ? [{ title: 'Checks passés (%)', list: [
+      { name: 'checks % (fusion)', color: '#46e5b1', fmt: 'pct', values: rows.map((r) => r.checksPct) },
+      ...wSeries('checks %', 'pct', (bw) => (bw && bw.checks ? bw.checks.avg * 100 : null)) ] }] : []),
+    ...(hasMetric('http_req_failed') ? [{ title: 'Échecs (%)', list: [
+      { name: 'failed % (fusion)', color: '#ff5c5c', fmt: 'pct', values: rows.map((r) => r.failedPct) },
+      ...wSeries('failed %', 'pct', (bw) => (bw && bw.http_req_failed ? bw.http_req_failed.avg * 100 : null)) ] }] : []),
+    ...(hasMetric('iterations') ? [{ title: 'Itérations/s', list: [
+      { name: 'itér./s (fusion)', color: '#46e5b1', fmt: 'int', values: rows.map((r) => r.iterRate) },
+      ...wSeries('itér./s', 'int', (bw) => (bw && bw.iterations ? bw.iterations.rate : null)) ] }] : [])
   ];
   const metricNames = Object.keys(rep.metrics).sort();
   for (const name of metricNames) {
     charts.push({ title: name, list: [
-      { name: 'avg', color: '#46e5b1', fmt: 'num', values: M(name) },
-      { name: 'p95', color: '#ffb224', fmt: 'num', values: Mp(name) }] });
+      { name: 'avg (fusion)', color: '#46e5b1', fmt: 'num', values: M(name) },
+      { name: 'p95 (fusion)', color: '#ffb224', fmt: 'num', values: Mp(name) },
+      ...wSeries('avg', 'num', (bw) => (bw && bw[name] ? bw[name].avg : null)),
+      ...wSeries('p95', 'num', (bw) => (bw && bw[name] ? bw[name].p95 : null), '5 3') ] });
   }
   const built = charts.map((c) => svgChart(times, c.list));
-  const data = built.map((b) => b.data);
 
   const t = rep.totals;
   const workersRows = rep.workers.map((w) => `
@@ -787,6 +891,10 @@ function buildHtmlReport(s) {
   .cell span { color: #7d8ca0; font-size: 12px; }
   figure.rpt-chart { margin: 0 0 16px; border: 1px solid rgba(140,165,195,.15); border-radius: 8px; padding: 8px 10px; }
   .rpt-chart figcaption { color: #9fb0c4; font-size: 12px; letter-spacing: .06em; text-transform: uppercase; margin-bottom: 4px; }
+  .sr-row { display: flex; flex-wrap: wrap; gap: 4px 14px; margin: 0 0 8px; }
+  .sr { display: inline-flex; align-items: center; gap: 5px; font: 11px "IBM Plex Mono", ui-monospace, monospace; color: #9fb0c4; cursor: pointer; user-select: none; }
+  .sr input { accent-color: #46e5b1; cursor: pointer; }
+  .sr .sw { width: 10px; height: 3px; border-radius: 2px; display: inline-block; }
   svg { display: block; }
   .gl { stroke: rgba(160,180,210,.08); }
   .ax { fill: rgba(125,140,160,.85); font: 10px "IBM Plex Mono", ui-monospace, monospace; }
@@ -821,7 +929,13 @@ function buildHtmlReport(s) {
   </table>
 
   <h2>Graphiques</h2>
-  ${built.map((b, i) => `<figure class="rpt-chart"><figcaption>${htmlEsc(charts[i].title)}</figcaption>${b.svg}</figure>`).join('')}
+  <p class="sub">Chaque graphique porte la courbe de fusion et une courbe par worker — cochez une série pour l'afficher ou la masquer.</p>
+  ${built.map((b, i) => `
+  <figure class="rpt-chart">
+    <figcaption>${htmlEsc(charts[i].title)}</figcaption>
+    <div class="sr-row">${b.data.series.map((sr, k) => `<label class="sr"><input type="checkbox" checked data-s="${k}"><i class="sw" style="background:${sr.color}"></i>${htmlEsc(sr.name)}</label>`).join('')}</div>
+    ${b.svg}
+  </figure>`).join('')}
 
   <h2>Toutes les métriques</h2>
   <table>
@@ -837,8 +951,10 @@ function buildHtmlReport(s) {
 <div id="tip"></div>
 <script>
 (function () {
-  var DATA = ${JSON.stringify(data).replace(/</g, '\\u003c')};
-  var W = 880, pL = 50, pR = 14;
+  var DATA = ${JSON.stringify({ times: times, charts: built.map((b) => b.data) }).replace(/</g, '\\u003c')};
+  var W = 880, H = 170, pL = 50, pR = 14, pT = 12, pB = 24;
+  var iw = W - pL - pR, ih = H - pT - pB;
+  var NS = 'http://www.w3.org/2000/svg';
   var F = {
     int: function (v) { return v == null ? '—' : Math.round(v).toLocaleString('fr-FR'); },
     num: function (v) { return v == null ? '—' : Number(v).toFixed(2); },
@@ -847,24 +963,48 @@ function buildHtmlReport(s) {
   };
   var tip = document.getElementById('tip');
   document.querySelectorAll('figure.rpt-chart').forEach(function (fig, k) {
-    var d = DATA[k];
+    var d = DATA.charts[k];
     if (!d) return;
+    var times = d.times;
+    var n = times.length;
+    var top = d.top || 1;
     var svg = fig.querySelector('svg');
     var crs = svg.querySelector('.crs');
-    var n = d.times.length;
+    var g = document.createElementNS(NS, 'g');
+    var X = function (i) { return pL + (n === 1 ? iw / 2 : (i / (n - 1)) * iw); };
+    var Y = function (v) { return pT + ih - (v / top) * ih; };
+    d.series.forEach(function (s) {
+      var p = document.createElementNS(NS, 'path');
+      var dd = '';
+      var pen = false;
+      s.values.forEach(function (v, i) {
+        if (v == null || !isFinite(v)) { pen = false; return; }
+        dd += (pen ? ' L' : ' M') + X(i).toFixed(1) + ' ' + Y(v).toFixed(1);
+        pen = true;
+      });
+      p.setAttribute('d', dd.trim() || 'M0 0');
+      p.setAttribute('fill', 'none');
+      p.setAttribute('stroke', s.color);
+      p.setAttribute('stroke-width', s.dash ? '1.4' : '2');
+      p.setAttribute('stroke-linejoin', 'round');
+      if (s.dash) p.setAttribute('stroke-dasharray', s.dash);
+      g.appendChild(p);
+    });
+    svg.insertBefore(g, crs);
     svg.addEventListener('mousemove', function (ev) {
       if (!n) return;
       var r = svg.getBoundingClientRect();
       var scale = r.width / W;
       var mx = (ev.clientX - r.left) / scale;
-      var i = n === 1 ? 0 : Math.round(((mx - pL) / (W - pL - pR)) * (n - 1));
+      var i = n === 1 ? 0 : Math.round(((mx - pL) / iw) * (n - 1));
       i = Math.max(0, Math.min(n - 1, i));
-      var x = pL + (n === 1 ? (W - pL - pR) / 2 : (i / (n - 1)) * (W - pL - pR));
+      var x = pL + (n === 1 ? iw / 2 : (i / (n - 1)) * iw);
       crs.setAttribute('x1', x);
       crs.setAttribute('x2', x);
       crs.style.display = '';
-      var html = '<span class="tt">' + new Date(d.times[i]).toLocaleString('fr-FR') + '</span>';
-      d.series.forEach(function (s) {
+      var html = '<span class="tt">' + new Date(times[i]).toLocaleString('fr-FR') + '</span>';
+      d.series.forEach(function (s, si) {
+        if (g.children[si] && g.children[si].style.display === 'none') return;
         html += '<br>' + s.name + ' : ' + (F[s.fmt] || F.num)(s.values[i]);
       });
       tip.innerHTML = html;
@@ -878,6 +1018,12 @@ function buildHtmlReport(s) {
     svg.addEventListener('mouseleave', function () {
       crs.style.display = 'none';
       tip.style.display = 'none';
+    });
+    fig.querySelectorAll('.sr input').forEach(function (inp) {
+      inp.addEventListener('change', function () {
+        var p = g.children[+inp.getAttribute('data-s')];
+        if (p) p.style.display = inp.checked ? '' : 'none';
+      });
     });
   });
 })();

@@ -468,6 +468,40 @@ input::placeholder { color: var(--text-faint); }
 .sw-blue { background: var(--blue); }
 .sw-amber { background: var(--amber); }
 
+/* Séries affichées : cases à cocher (Fusion + une par worker) sous chaque graphique */
+.series-toggle {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+}
+
+.series-toggle:empty { display: none; }
+
+.sr {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font: 500 10.5px 'IBM Plex Mono', monospace;
+  color: var(--text-dim);
+  cursor: pointer;
+  user-select: none;
+}
+
+.sr input {
+  accent-color: var(--accent);
+  cursor: pointer;
+  margin: 0;
+}
+
+.sr .sw2 {
+  width: 10px;
+  height: 3px;
+  border-radius: 2px;
+  display: inline-block;
+}
+
+.sr:hover { color: var(--text); }
+
 /* Infobulle de survol des graphiques (valeur à l'instant t) */
 .chart-tip {
   position: fixed;
@@ -503,6 +537,13 @@ input::placeholder { color: var(--text-faint); }
   margin-top: 12px;
 }
 
+.metric-chart-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
 .metric-body canvas {
   width: 100%;
   height: 220px;
@@ -530,6 +571,20 @@ input::placeholder { color: var(--text-faint); }
   text-align: right;
   white-space: nowrap;
 }
+
+.metric-table .src-th { text-align: left; }
+
+.metric-table td.src {
+  text-align: left;
+  color: var(--text-dim);
+  max-width: 170px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.metric-table tr.fusion-row td { color: var(--text); }
+
+.metric-table tr.fusion-row td.src { color: var(--accent); }
 
 .metric-table td {
   border-bottom: 1px solid var(--line-soft);

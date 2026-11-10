@@ -22,7 +22,7 @@ const els = {
   btnStop: $('#btn-stop'),
   formStatus: $('#form-status'),
   metricSelect: $('#metric-select'),
-  metricRow: $('#metric-row'),
+  metricTbody: $('#metric-tbody'),
   metricNote: $('#metric-note'),
   logsTabs: $('#logs-tabs'),
   logview: $('#logview'),
@@ -70,8 +70,13 @@ let lastRowAt = 0;           // horodatage du dernier snapshot reçu
 let lastResyncAt = 0;        // dernier rejeu forcé (garde-fou anti-boucle)
 let maxSeq = 0;             // dédoublonnage du rejeu
 let activeWorker = null;    // onglet de logs sélectionné
+let workerIds = [];        // workers ayant produit des métriques (ordre d'apparition)
 let totalLogLines = 0;
 let stick = true;
+
+/* Couleurs des courbes par worker (distinctes des couleurs « fusion ») */
+const WORKER_PALETTE = ['#c084fc', '#45e3ff', '#ff8fa3', '#a3e635', '#f0abfc', '#ffd166'];
+const workerColor = (i) => WORKER_PALETTE[i % WORKER_PALETTE.length];
 
 /* ---------- Petits utilitaires ---------- */
 
@@ -195,7 +200,9 @@ function drawLines(canvas, seriesDef, valuesBySeries, hoverIndex = -1) {
     ctx.strokeStyle = s.color;
     ctx.lineWidth = 1.6;
     ctx.lineJoin = 'round';
+    ctx.setLineDash(s.dash ? s.dash.split(' ').map(Number) : []);
     ctx.stroke();
+    ctx.setLineDash([]);
   });
 
   // Repère de survol : ligne verticale + pastille sur chaque série
@@ -239,50 +246,116 @@ function drawSpark(canvas, values, color) {
 
 /* ---------- Graphiques principaux ---------- */
 
+// Valeur d'une métrique pour un worker donné (0 tant que le worker n'émet pas)
+function wStat(r, wid, metric, key, mult = 1) {
+  const bw = (r.byWorker || {})[wid];
+  const v = bw && bw[metric] ? bw[metric][key] : null;
+  return v == null || !isFinite(v) ? 0 : v * mult;
+}
+
+/*
+ * Chaque graphique porte :
+ *  - les courbes de FUSION (tous les workers, agrégées par l'orchestrateur),
+ *  - une courbe par WORKER (r.byWorker), affichable/masquable par case à cocher.
+ * Les courbes des workers se désignent en pointillés (même couleur, 2e rôle).
+ */
 const chartDefs = [
   {
     canvas: $('#chart-http'),
-    names: ['req/s', 'failed/s'],
-    gets: [(r) => r.rates.httpReq, (r) => r.rates.httpFailed],
+    fusion: [
+      { label: 'req/s', get: (r) => r.rates.httpReq, fmt: fmtInt },
+      { label: 'failed/s', get: (r) => r.rates.httpFailed, fmt: fmtInt }
+    ],
+    workerRoles: [
+      { label: 'req/s', get: (r, wid) => wStat(r, wid, 'http_reqs', 'rate'), fmt: fmtInt },
+      { label: 'failed/s', get: (r, wid) => wStat(r, wid, 'http_req_failed', 'rate'), fmt: fmtInt }
+    ],
     colors: ['#46e5b1', '#ff5c5c'],
-    fill: 'rgba(70,229,177,0.10)',
-    fmts: [fmtInt, fmtInt]
+    fill: 'rgba(70,229,177,0.10)'
   },
   {
     canvas: $('#chart-data'),
-    names: ['reçues', 'envoyées'],
-    gets: [(r) => r.rates.dataReceived, (r) => r.rates.dataSent],
+    fusion: [
+      { label: 'reçues', get: (r) => r.rates.dataReceived, fmt: fmtBytesRate },
+      { label: 'envoyées', get: (r) => r.rates.dataSent, fmt: fmtBytesRate }
+    ],
+    workerRoles: [
+      { label: 'reçues', get: (r, wid) => wStat(r, wid, 'data_received', 'rate'), fmt: fmtBytesRate },
+      { label: 'envoyées', get: (r, wid) => wStat(r, wid, 'data_sent', 'rate'), fmt: fmtBytesRate }
+    ],
     colors: ['#5eb1ff', '#ffb224'],
-    fill: 'rgba(94,177,255,0.10)',
-    fmts: [fmtBytesRate, fmtBytesRate]
+    fill: 'rgba(94,177,255,0.10)'
   },
   {
     canvas: $('#chart-vus'),
-    names: ['actifs'],
-    gets: [(r) => r.vus.current],
+    fusion: [
+      { label: 'actifs', get: (r) => r.vus.current, fmt: fmtInt }
+    ],
+    workerRoles: [
+      { label: 'VUS', get: (r, wid) => wStat(r, wid, 'vus', 'last'), fmt: fmtInt }
+    ],
     colors: ['#46e5b1'],
-    fill: 'rgba(70,229,177,0.14)',
-    fmts: [fmtInt]
+    fill: 'rgba(70,229,177,0.14)'
   },
   {
     canvas: $('#chart-checks'),
-    names: ['checks %'],
-    gets: [(r) => (r.checks && r.checks.pct != null ? r.checks.pct : 0)],
+    fusion: [
+      { label: 'checks %', get: (r) => (r.checks && r.checks.pct != null ? r.checks.pct : 0), fmt: fmtPct }
+    ],
+    workerRoles: [
+      { label: 'checks %', get: (r, wid) => wStat(r, wid, 'checks', 'avg', 100), fmt: fmtPct }
+    ],
     colors: ['#46e5b1'],
-    fill: 'rgba(70,229,177,0.14)',
-    fmts: [fmtPct]
+    fill: 'rgba(70,229,177,0.14)'
   }
 ];
 
-function redrawChart(c, hoverIndex) {
-  const vals = c.gets.map((g) => rows.map(g));
-  const series = c.gets.map((g, i) => ({ color: c.colors[i], fill: i === 0 ? c.fill : null }));
+/* ---------- Séries : fusion + une par worker ---------- */
+
+// Liste complète des séries d'un graphique : les courbes de fusion d'abord,
+// puis une (ou deux) courbe(s) par worker, dans l'ordre d'apparition.
+function buildSeries(c) {
+  const out = [];
+  c.fusion.forEach((f, i) => {
+    out.push({
+      id: `f-${i}`,
+      label: f.label,
+      color: c.colors[i],
+      dash: null,
+      fill: i === 0 ? c.fill : null,
+      get: f.get,
+      fmt: f.fmt
+    });
+  });
+  workerIds.forEach((wid, wi) => {
+    const col = workerColor(wi);
+    c.workerRoles.forEach((role, ri) => {
+      out.push({
+        id: `w-${wi}-${ri}`,
+        label: `${wid} · ${role.label}`,
+        color: col,
+        dash: ri > 0 ? '4 4' : null,
+        fill: null,
+        get: (r) => role.get(r, wid),
+        fmt: role.fmt
+      });
+    });
+  });
+  return out;
+}
+
+const seriesVisible = new Map(); // id de série -> visible (défaut : affichée)
+const isSeriesOn = (id) => seriesVisible.get(id) !== false;
+
+function drawSeriesChart(c, hoverIndex = -1) {
+  const series = buildSeries(c).filter((s) => isSeriesOn(s.id));
+  const vals = series.map((s) => rows.map((r) => s.get(r)));
   drawLines(c.canvas, series, vals, hoverIndex);
 }
 
 function drawCharts() {
-  for (const c of chartDefs) redrawChart(c, -1);
-  drawMetricChart(-1);
+  for (const c of chartDefs) drawSeriesChart(c);
+  drawMetricChart();
   // Le curseur survole-t-il un graphique ? On garde le repère stable pendant les rafraîchissements live
   if (hoverState) hoverState.redraw(hoverState.index);
 }
@@ -291,14 +364,16 @@ function metricDef() {
   const name = els.metricSelect.value;
   return {
     canvas: $('#chart-metric'),
-    gets: [
-      (r) => (r.metrics[name] ? r.metrics[name].avg : 0) || 0,
-      (r) => (r.metrics[name] ? r.metrics[name].p95 : 0) || 0
+    fusion: [
+      { label: 'avg', get: (r) => (r.metrics[name] ? r.metrics[name].avg : 0) || 0, fmt: fmtNum },
+      { label: 'p95', get: (r) => (r.metrics[name] ? r.metrics[name].p95 : 0) || 0, fmt: fmtNum }
+    ],
+    workerRoles: [
+      { label: 'avg', get: (r, wid) => wStat(r, wid, name, 'avg'), fmt: fmtNum },
+      { label: 'p95', get: (r, wid) => wStat(r, wid, name, 'p95'), fmt: fmtNum }
     ],
     colors: ['#46e5b1', '#ffb224'],
-    fill: 'rgba(70,229,177,0.10)',
-    names: ['avg', 'p95'],
-    fmts: [fmtNum, fmtNum]
+    fill: 'rgba(70,229,177,0.10)'
   };
 }
 
@@ -307,7 +382,55 @@ function drawMetricChart(hoverIndex = -1) {
     prep($('#chart-metric'));
     return;
   }
-  redrawChart(metricDef(), hoverIndex);
+  drawSeriesChart(metricDef(), hoverIndex);
+}
+
+/* ---------- Cases à cocher sous chaque graphique ---------- */
+
+// Reconstruit les cases (Fusion + courbe par worker) ; à appeler quand la
+// liste des workers ou de la métrique sélectionnée change.
+function renderToggles(c) {
+  const box = c.canvas.nextElementSibling;
+  if (!box) return;
+  const series = buildSeries(c);
+  const frag = document.createDocumentFragment();
+  for (const s of series) {
+    const label = document.createElement('label');
+    label.className = 'sr';
+    const inp = document.createElement('input');
+    inp.type = 'checkbox';
+    inp.checked = isSeriesOn(s.id);
+    const sw = document.createElement('i');
+    sw.className = 'sw2';
+    sw.style.background = s.color;
+    label.append(inp, sw, document.createTextNode(s.label));
+    frag.appendChild(label);
+    inp.addEventListener('change', () => {
+      seriesVisible.set(s.id, inp.checked);
+      drawSeriesChart(c);
+    });
+  }
+  box.replaceChildren(frag);
+}
+
+function syncSeriesUI() {
+  for (const c of chartDefs) renderToggles(c);
+  const mdef = metricDef();
+  const mbox = mdef.canvas.nextElementSibling;
+  if (els.metricSelect.value) renderToggles(mdef);
+  else if (mbox) mbox.replaceChildren();
+}
+
+// Un worker émet-t-il des métriques pour la première fois ? (mise à jour des séries)
+function noteWorkers(row) {
+  let changed = false;
+  for (const wid of Object.keys(row.byWorker || {})) {
+    if (!workerIds.includes(wid)) {
+      workerIds.push(wid);
+      changed = true;
+    }
+  }
+  return changed;
 }
 
 /* ---------- Survol des graphiques (valeur à l'instant t) ---------- */
@@ -343,7 +466,7 @@ function chartIndexFromX(canvas, x, n) {
   return Math.max(0, Math.min(n - 1, i));
 }
 
-function makeHover(canvas, getView, redraw) {
+function makeHover(canvas, getSeries, redraw) {
   const setHover = (i) => { hoverState = i >= 0 ? { redraw, index: i } : null; };
   canvas.addEventListener('mousemove', (e) => {
     const n = rows.length;
@@ -352,10 +475,10 @@ function makeHover(canvas, getView, redraw) {
     const i = chartIndexFromX(canvas, e.clientX - rect.left, n);
     setHover(i);
     if (i < 0) { hideChartTip(); return; }
-    const v = getView();
     const r = rows[i];
+    // Valeur de TOUTES les séries affichées à l'instant t (fusion + workers)
     const html = `<span class="tt">${timeLabel(r.t)}</span>` +
-      v.gets.map((g, k) => `<br>${v.names[k]} : ${v.fmts[k](g(r))}`).join('');
+      getSeries().filter((s) => isSeriesOn(s.id)).map((s) => `<br>${s.label} : ${s.fmt(s.get(r))}`).join('');
     showChartTip(e, html);
   });
   canvas.addEventListener('mouseleave', () => {
@@ -364,8 +487,8 @@ function makeHover(canvas, getView, redraw) {
   });
 }
 
-for (const c of chartDefs) makeHover(c.canvas, () => c, (i) => redrawChart(c, i));
-makeHover($('#chart-metric'), metricDef, (i) => drawMetricChart(i));
+for (const c of chartDefs) makeHover(c.canvas, () => buildSeries(c), (i) => drawSeriesChart(c, i));
+makeHover($('#chart-metric'), () => buildSeries(metricDef()), (i) => drawMetricChart(i));
 /* ---------- Cartes de synthèse (façon dashboard k6) ---------- */
 
 const CARDS = [
@@ -435,19 +558,52 @@ function syncMetricSelect() {
   els.metricSelect.value = names.includes(cur) ? cur : names[0] || '';
 }
 
+function metricTableRow(src, st) {
+  const tr = document.createElement('tr');
+  const fmts = [fmtInt, fmtInt, fmtNum, fmtNum, fmtNum, fmtNum, fmtNum, fmtNum, fmtNum, fmtNum];
+  const vals = [st.count, st.rate, st.avg, st.p70, st.p80, st.p90, st.p95, st.p99, st.min, st.max];
+  const td0 = document.createElement('td');
+  td0.className = 'src';
+  td0.textContent = src;
+  tr.appendChild(td0);
+  vals.forEach((v, i) => {
+    const td = document.createElement('td');
+    td.textContent = fmts[i](v);
+    tr.appendChild(td);
+  });
+  return tr;
+}
+
 function updateMetricTable() {
   const name = els.metricSelect.value;
   const r = rows[rows.length - 1];
   const st = name && r ? r.metrics[name] : null;
-  const tds = els.metricRow.children;
+  const tbody = els.metricTbody;
   if (!st) {
-    for (const td of tds) td.textContent = '—';
+    const tr = document.createElement('tr');
+    const td0 = document.createElement('td');
+    td0.className = 'src';
+    td0.textContent = 'fusion';
+    tr.appendChild(td0);
+    for (let i = 0; i < 10; i++) {
+      const td = document.createElement('td');
+      td.textContent = '—';
+      tr.appendChild(td);
+    }
+    tbody.replaceChildren(tr);
     els.metricNote.textContent = 'Pas encore de points pour cette métrique.';
     return;
   }
-  const fmts = [fmtInt, fmtInt, fmtNum, fmtNum, fmtNum, fmtNum, fmtNum, fmtNum, fmtNum, fmtNum];
-  const vals = [st.count, st.rate, st.avg, st.p70, st.p80, st.p90, st.p95, st.p99, st.min, st.max];
-  tds.forEach((td, i) => { td.textContent = fmts[i](vals[i]); });
+  // Ligne de fusion + une ligne par worker
+  const frag = document.createDocumentFragment();
+  const first = metricTableRow('fusion', st);
+  first.className = 'fusion-row';
+  frag.appendChild(first);
+  for (const wid of workerIds) {
+    const wst = (r.byWorker || {})[wid] && (r.byWorker[wid][name]);
+    if (wst) frag.appendChild(metricTableRow(wid, wst));
+  }
+  tbody.replaceChildren(frag);
   els.metricNote.textContent =
     `Métrique « ${name} » — percentiles recalculés sur les ${Math.min(rows.length, 5000)} derniers points.`;
 }
@@ -538,6 +694,8 @@ function resetAll() {
   maxSeq = 0;
   activeWorker = null;
   totalLogLines = 0;
+  workerIds = [];
+  seriesVisible.clear();
   workerLogs.clear();
   els.logsTabs.replaceChildren();
   tabs.clear();
@@ -546,6 +704,7 @@ function resetAll() {
   els.logCount.textContent = '0';
   syncMetricSelect();
   updateMetricTable();
+  syncSeriesUI();
   drawCharts();
   updateCards();
 }
@@ -739,9 +898,11 @@ socket.on('ui:metrics_replay', ({ session, rows: replayRows }) => {
     resetAll();
   }
   rows = replayRows || [];
+  for (const r of rows) noteWorkers(r);
   if (rows.length) lastRowAt = Date.now();
   syncMetricSelect();
   updateMetricTable();
+  syncSeriesUI();
   drawCharts();
   updateCards();
 });
@@ -761,6 +922,7 @@ socket.on('ui:metrics', ({ session, running, row }) => {
       return;
     }
   }
+  if (noteWorkers(row)) syncSeriesUI();
   rows.push(row);
   lastRowAt = Date.now();
   if (rows.length > HISTORY_MAX) rows.shift();
@@ -861,6 +1023,7 @@ setInterval(() => {
 }, 1000);
 els.rawWorkerSelect.addEventListener('change', syncReportButtons);
 els.metricSelect.addEventListener('change', () => {
+  syncSeriesUI();
   drawMetricChart();
   updateMetricTable();
 });

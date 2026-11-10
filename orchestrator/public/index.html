@@ -85,6 +85,7 @@
             <span class="legend"><i class="sw sw-accent"></i>req/s <i class="sw sw-red"></i>failed/s</span>
           </div>
           <canvas id="chart-http"></canvas>
+          <div class="series-toggle" aria-label="Séries affichées"></div>
         </div>
         <div class="panel chart-panel reveal">
           <div class="chart-head">
@@ -92,6 +93,7 @@
             <span class="legend"><i class="sw sw-blue"></i>reçues <i class="sw sw-amber"></i>envoyées</span>
           </div>
           <canvas id="chart-data"></canvas>
+          <div class="series-toggle" aria-label="Séries affichées"></div>
         </div>
         <div class="panel chart-panel reveal">
           <div class="chart-head">
@@ -99,6 +101,7 @@
             <span class="legend"><i class="sw sw-accent"></i>actifs</span>
           </div>
           <canvas id="chart-vus"></canvas>
+          <div class="series-toggle" aria-label="Séries affichées"></div>
         </div>
         <div class="panel chart-panel reveal">
           <div class="chart-head">
@@ -106,6 +109,7 @@
             <span class="legend"><i class="sw sw-accent"></i>%</span>
           </div>
           <canvas id="chart-checks"></canvas>
+          <div class="series-toggle" aria-label="Séries affichées"></div>
         </div>
       </div>
 
@@ -119,15 +123,18 @@
           <span class="legend"><i class="sw sw-accent"></i>avg <i class="sw sw-amber"></i>p95</span>
         </div>
         <div class="metric-body">
-          <canvas id="chart-metric"></canvas>
+          <div class="metric-chart-wrap">
+            <canvas id="chart-metric"></canvas>
+            <div class="series-toggle" aria-label="Séries affichées"></div>
+          </div>
           <div class="metric-table">
             <table>
               <thead>
-                <tr><th>count</th><th>rate</th><th>avg</th><th>p70</th><th>p80</th><th>p90</th><th>p95</th><th>p99</th><th>min</th><th>max</th></tr>
+                <tr><th class="src-th">source</th><th>count</th><th>rate</th><th>avg</th><th>p70</th><th>p80</th><th>p90</th><th>p95</th><th>p99</th><th>min</th><th>max</th></tr>
               </thead>
-              <tbody>
-                <tr id="metric-row">
-                  <td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td>
+              <tbody id="metric-tbody">
+                <tr>
+                  <td class="src">fusion</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td>
                 </tr>
               </tbody>
             </table>
