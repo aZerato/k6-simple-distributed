@@ -116,7 +116,40 @@ node \orchestrator\orchestrator.js
 node \worker\worker.js
 ```
 
-Puis retourner sur l'Orchestrateur :
+Puis, depuis le navigateur de l'Orchestrateur, ouvrir **`http://localhost:3000`** (voir section 5) —
+ou, côté API, déclencher le test de démonstration :
 ```shell
 node \orchestrator\test\trigger.js
 ```
+
+---
+
+## 5. Console web de l'Orchestrateur
+
+Dès le démarrage, l'orchestrateur sert une console web sur **`http://<IP_ORCHESTRATEUR>:3000`**
+(dossier `orchestrator/public/`). Elle permet de :
+
+* **Voir en direct la concaténation des retours des tests** : chaque ligne de sortie
+  (`stdout`/`stderr`) produite par chaque worker est horodatée, étiquetée du nom du worker
+  et affichée en flux unique, en direct, via socket.io.
+* **Lancer un test** (script k6, VUS totales, durée) et **arrêter** un test d'urgence,
+  directement depuis l'interface.
+* **Télécharger le rapport** : le bouton « ⬇ Télécharger le rapport (.txt) » exporte le
+  flux de logs concaténé de la session, préfixé d'un en-tête (identifiant, VUS, durée,
+  code de sortie de chaque worker). Les 10 dernières sessions restent sélectionnables
+  dans le menu déroulant du bandeau « Rapport ».
+* **Suivre l'état des workers** (Disponible / Occupé) en temps réel.
+
+### API HTTP additionnelle (rapport & sessions)
+
+| Méthode | Route                        | Description                                                        |
+|--------|------------------------------|------------------------------------------------------------------|
+| GET    | `/api/test/sessions`         | Liste des 10 dernières sessions (statut, VUS, durée, nb de lignes) |
+| GET    | `/api/test/report`           | Rapport texte de la session en cours (ou de la dernière) — téléchargeable |
+| GET    | `/api/test/report?session=`  | Rapport texte d'une session précise (identifiant `sess-…`)        |
+| POST   | `/api/test/start`            | Lancement d'un test distribué (409 si un test est déjà en cours)   |
+| POST   | `/api/test/stop`             | Arrêt d'urgence de tous les tests                                  |
+
+> **Note :** un seul test est exécuté à la fois. Si une session est encore en cours
+> (par exemple après un arrêt d'urgence, tant que k6 n'a pas émis son code de sortie),
+> `POST /api/test/start` répond `409`.
