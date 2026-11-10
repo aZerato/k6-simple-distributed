@@ -1,3 +1,4 @@
+// Ce script déclenche un test de charge via l'API de l'orchestrateur.
 import fs from 'fs';
 
 const payload = {

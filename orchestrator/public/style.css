@@ -319,6 +319,12 @@ input::placeholder { color: var(--text-faint); }
 .form-status.ok { color: var(--accent); }
 .form-status.err { color: #ff8f8f; }
 
+.field-hint {
+  font-size: 10.5px;
+  line-height: 1.45;
+  color: var(--text-faint);
+}
+
 /* ---------- Boutons ---------- */
 
 .btn {
@@ -461,6 +467,23 @@ input::placeholder { color: var(--text-faint); }
 .sw-red { background: var(--red); }
 .sw-blue { background: var(--blue); }
 .sw-amber { background: var(--amber); }
+
+/* Infobulle de survol des graphiques (valeur à l'instant t) */
+.chart-tip {
+  position: fixed;
+  display: none;
+  pointer-events: none;
+  z-index: 40;
+  background: #101823;
+  border: 1px solid rgba(70, 229, 177, 0.4);
+  border-radius: 6px;
+  padding: 6px 9px;
+  font: 12px/1.6 'IBM Plex Mono', ui-monospace, monospace;
+  color: #d7e3ee;
+  white-space: nowrap;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.5);
+}
+.chart-tip .tt { color: var(--accent); display: block; }
 
 /* ---------- Explorateur de métrique ---------- */
 

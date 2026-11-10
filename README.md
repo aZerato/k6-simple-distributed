@@ -138,9 +138,15 @@ Dès le démarrage, l'orchestrateur sert une console web sur **`http://<IP_ORCHE
   min, max).
 * **Consulter les logs par worker** : chaque agent possède son onglet (pas de
   concaténation) avec horodatage millisecondes et type `STDOUT`/`STDERR`.
-* **Lancer un test** (script k6, VUS totales, durée) et **arrêter** un test d'urgence,
-  directement depuis l'interface.
+* **Lancer un test** (script k6 **collé** ou **pointé par un chemin `.js`**, VUS totales,
+  durée) et **arrêter** un test d'urgence, directement depuis l'interface. Le chemin est
+  lu sur la machine de l'orchestrateur puis injecté tel quel aux workers.
 * **Télécharger le rapport** de la session :
+  * **`.html`** — une page **autoportée** : graphiques SVG interactifs (infobulle avec la
+    valeur à l'instant t au survol) pour les séries principales **et chaque métrique**
+    (avg + p95), synthèse, tableau de **toutes les métriques** (count, rate, min, avg,
+    p70/p80/p90/p95/p99, max), et logs par worker. S'ouvre dans le navigateur, aucun
+    serveur requis.
   * **`.json`** — le rapport complet : totaux (requêtes, échecs %, données, checks),
     statistiques finales de toutes les métriques (percentiles inclus), les séries
     horodatées par seconde (reconstruisables en graphiques) et les logs par worker.
@@ -171,6 +177,7 @@ console. Les logs console de k6 continuent d'arriver via `worker:log`.
 | GET    | `/api/test/sessions`         | Liste des 10 dernières sessions (statut, VUS, durée, VUS max, workers) |
 | GET    | `/api/test/report`           | Rapport JSON de la session en cours (ou de la dernière)             |
 | GET    | `/api/test/report?format=txt`| Rapport texte (résumé) de la session en cours                       |
+| GET    | `/api/test/report?format=html`| Rapport HTML autoporté (graphiques SVG + toutes les métriques)       |
 | GET    | `/api/test/report?session=`  | Rapport d'une session précise (identifiant `sess-…`)               |
 | GET    | `/api/raw-metrics`           | Sortie JSON brute k6 d'un worker (`?session=&worker=`, JSON Lines) |
 | POST   | `/api/test/start`            | Lancement d'un test distribué (409 si un test est déjà en cours)   |

@@ -1,3 +1,4 @@
+// Est un exemple de test K6
 import http from 'k6/http';
 import { sleep } from 'k6';
 

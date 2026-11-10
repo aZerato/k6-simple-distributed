@@ -46,6 +46,11 @@
         <h2 class="panel-title">Lancer un test</h2>
         <form id="test-form">
           <label class="field">
+            <span class="field-label">Fichier de script (chemin .js)</span>
+            <input id="script-path" type="text" placeholder="ex. C:\k6\script.js (optionnel)" />
+            <span class="field-hint">Si renseignée, cette voie l'emporte sur le code collé ci-dessous. Le fichier est lu sur la machine de l'orchestrateur.</span>
+          </label>
+          <label class="field">
             <span class="field-label">Script k6 (JavaScript)</span>
             <textarea id="script" class="mono" spellcheck="false"></textarea>
           </label>
@@ -160,7 +165,8 @@
           <option value="">(aucun worker)</option>
         </select>
         <span class="report-meta" id="report-meta"></span>
-        <button class="btn btn-primary" id="btn-report-json" disabled>⬇ Rapport (.json)</button>
+        <button class="btn btn-primary" id="btn-report-html" disabled>⬇ Rapport (.html)</button>
+        <button class="btn btn-ghost" id="btn-report-json" disabled>⬇ Rapport (.json)</button>
         <button class="btn btn-ghost" id="btn-report-txt" disabled>Résumé (.txt)</button>
         <button class="btn btn-ghost" id="btn-report-raw" disabled title="Sortie JSON brute de k6 (fichier --out json=, une ligne par point de données)">⬇ JSON brut k6 (.jsonl)</button>
       </div>

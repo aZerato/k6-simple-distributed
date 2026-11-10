@@ -14,6 +14,7 @@ const els = {
   workersEmpty: $('#workers-empty'),
   cards: $('#cards'),
   form: $('#test-form'),
+  scriptPath: $('#script-path'),
   script: $('#script'),
   totalVus: $('#total-vus'),
   duration: $('#duration'),
@@ -32,6 +33,7 @@ const els = {
   sessionSelect: $('#session-select'),
   rawWorkerSelect: $('#raw-worker-select'),
   reportMeta: $('#report-meta'),
+  btnReportHtml: $('#btn-report-html'),
   btnReportJson: $('#btn-report-json'),
   btnReportTxt: $('#btn-report-txt'),
   btnReportRaw: $('#btn-report-raw')
@@ -63,6 +65,9 @@ let rows = [];              // snapshots (ui:metrics) de la session affichée
 let sessionSummaries = []; // dernier /api/test/sessions (pour le JSON brut par worker)
 let activeSessionId = null;    // session affichée (graphiques + logs)
 let userPinnedId = null;      // session choisie dans le sélecteur « Rapport » (ne pas être détaché)
+let runningSessionId = null;  // session RUNNING (d'après ui:session_state)
+let lastRowAt = 0;           // horodatage du dernier snapshot reçu
+let lastResyncAt = 0;        // dernier rejeu forcé (garde-fou anti-boucle)
 let maxSeq = 0;             // dédoublonnage du rejeu
 let activeWorker = null;    // onglet de logs sélectionné
 let totalLogLines = 0;
@@ -128,7 +133,8 @@ function axisLabel(v) {
 }
 
 // valuesBySeries : tableau de tableaux (un par série), indexé par le temps.
-function drawLines(canvas, seriesDef, valuesBySeries) {
+// hoverIndex >= 0 : trace un repère vertical + pastilles sur chaque série.
+function drawLines(canvas, seriesDef, valuesBySeries, hoverIndex = -1) {
   const { ctx, w, h } = prep(canvas);
   const padT = 6, padB = 16, padL = 8, padR = 8;
   const iw = w - padL - padR;
@@ -191,6 +197,27 @@ function drawLines(canvas, seriesDef, valuesBySeries) {
     ctx.lineJoin = 'round';
     ctx.stroke();
   });
+
+  // Repère de survol : ligne verticale + pastille sur chaque série
+  if (hoverIndex != null && hoverIndex >= 0 && hoverIndex < n) {
+    const hx = x(hoverIndex);
+    ctx.strokeStyle = 'rgba(220,235,255,0.35)';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([3, 3]);
+    ctx.beginPath();
+    ctx.moveTo(hx, padT);
+    ctx.lineTo(hx, padT + ih);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    valuesBySeries.forEach((arr, i) => {
+      const v = arr[hoverIndex];
+      if (v == null) return;
+      ctx.beginPath();
+      ctx.arc(hx, y(v), 3, 0, Math.PI * 2);
+      ctx.fillStyle = seriesDef[i].color;
+      ctx.fill();
+    });
+  }
 }
 
 function drawSpark(canvas, values, color) {
@@ -215,53 +242,130 @@ function drawSpark(canvas, values, color) {
 const chartDefs = [
   {
     canvas: $('#chart-http'),
+    names: ['req/s', 'failed/s'],
     gets: [(r) => r.rates.httpReq, (r) => r.rates.httpFailed],
     colors: ['#46e5b1', '#ff5c5c'],
-    fill: 'rgba(70,229,177,0.10)'
+    fill: 'rgba(70,229,177,0.10)',
+    fmts: [fmtInt, fmtInt]
   },
   {
     canvas: $('#chart-data'),
+    names: ['reçues', 'envoyées'],
     gets: [(r) => r.rates.dataReceived, (r) => r.rates.dataSent],
     colors: ['#5eb1ff', '#ffb224'],
-    fill: 'rgba(94,177,255,0.10)'
+    fill: 'rgba(94,177,255,0.10)',
+    fmts: [fmtBytesRate, fmtBytesRate]
   },
   {
     canvas: $('#chart-vus'),
+    names: ['actifs'],
     gets: [(r) => r.vus.current],
     colors: ['#46e5b1'],
-    fill: 'rgba(70,229,177,0.14)'
+    fill: 'rgba(70,229,177,0.14)',
+    fmts: [fmtInt]
   },
   {
     canvas: $('#chart-checks'),
+    names: ['checks %'],
     gets: [(r) => (r.checks && r.checks.pct != null ? r.checks.pct : 0)],
     colors: ['#46e5b1'],
-    fill: 'rgba(70,229,177,0.14)'
+    fill: 'rgba(70,229,177,0.14)',
+    fmts: [fmtPct]
   }
 ];
 
-function drawCharts() {
-  for (const c of chartDefs) {
-    const vals = c.gets.map((g) => rows.map(g));
-    const series = c.gets.map((g, i) => ({ color: c.colors[i], fill: i === 0 ? c.fill : null }));
-    drawLines(c.canvas, series, vals);
-  }
-  drawMetricChart();
+function redrawChart(c, hoverIndex) {
+  const vals = c.gets.map((g) => rows.map(g));
+  const series = c.gets.map((g, i) => ({ color: c.colors[i], fill: i === 0 ? c.fill : null }));
+  drawLines(c.canvas, series, vals, hoverIndex);
 }
 
-function drawMetricChart() {
-  const canvas = $('#chart-metric');
+function drawCharts() {
+  for (const c of chartDefs) redrawChart(c, -1);
+  drawMetricChart(-1);
+  // Le curseur survole-t-il un graphique ? On garde le repère stable pendant les rafraîchissements live
+  if (hoverState) hoverState.redraw(hoverState.index);
+}
+
+function metricDef() {
   const name = els.metricSelect.value;
-  if (!name) {
-    prep(canvas);
+  return {
+    canvas: $('#chart-metric'),
+    gets: [
+      (r) => (r.metrics[name] ? r.metrics[name].avg : 0) || 0,
+      (r) => (r.metrics[name] ? r.metrics[name].p95 : 0) || 0
+    ],
+    colors: ['#46e5b1', '#ffb224'],
+    fill: 'rgba(70,229,177,0.10)',
+    names: ['avg', 'p95'],
+    fmts: [fmtNum, fmtNum]
+  };
+}
+
+function drawMetricChart(hoverIndex = -1) {
+  if (!els.metricSelect.value) {
+    prep($('#chart-metric'));
     return;
   }
-  const avg = rows.map((r) => (r.metrics[name] ? r.metrics[name].avg : 0) || 0);
-  const p95 = rows.map((r) => (r.metrics[name] ? r.metrics[name].p95 : 0) || 0);
-  drawLines(canvas, [
-    { color: '#46e5b1', fill: 'rgba(70,229,177,0.10)' },
-    { color: '#ffb224', fill: null }
-  ], [avg, p95]);
+  redrawChart(metricDef(), hoverIndex);
 }
+
+/* ---------- Survol des graphiques (valeur à l'instant t) ---------- */
+
+const timeLabel = (iso) => new Date(iso).toLocaleTimeString('fr-FR');
+
+const chartTip = document.createElement('div');
+chartTip.className = 'chart-tip';
+chartTip.style.display = 'none';
+document.body.appendChild(chartTip);
+
+let hoverState = null; // { redraw, index } — graphique actuellement survolé
+
+function showChartTip(e, html) {
+  chartTip.innerHTML = html;
+  chartTip.style.display = 'block';
+  const tw = chartTip.offsetWidth;
+  let lx = e.clientX + 14;
+  if (lx + tw > window.innerWidth - 8) lx = e.clientX - tw - 14;
+  chartTip.style.left = `${lx}px`;
+  chartTip.style.top = `${Math.max(8, e.clientY - chartTip.offsetHeight - 6)}px`;
+}
+
+function hideChartTip() { chartTip.style.display = 'none'; }
+
+function chartIndexFromX(canvas, x, n) {
+  if (n <= 0) return -1;
+  if (n === 1) return 0;
+  const w = canvas.clientWidth || 300;
+  const padL = 8, padR = 8;
+  const iw = w - padL - padR;
+  const i = Math.round(((x - padL) / iw) * (n - 1));
+  return Math.max(0, Math.min(n - 1, i));
+}
+
+function makeHover(canvas, getView, redraw) {
+  const setHover = (i) => { hoverState = i >= 0 ? { redraw, index: i } : null; };
+  canvas.addEventListener('mousemove', (e) => {
+    const n = rows.length;
+    if (n === 0) { setHover(null); hideChartTip(); return; }
+    const rect = canvas.getBoundingClientRect();
+    const i = chartIndexFromX(canvas, e.clientX - rect.left, n);
+    setHover(i);
+    if (i < 0) { hideChartTip(); return; }
+    const v = getView();
+    const r = rows[i];
+    const html = `<span class="tt">${timeLabel(r.t)}</span>` +
+      v.gets.map((g, k) => `<br>${v.names[k]} : ${v.fmts[k](g(r))}`).join('');
+    showChartTip(e, html);
+  });
+  canvas.addEventListener('mouseleave', () => {
+    setHover(null);
+    hideChartTip();
+  });
+}
+
+for (const c of chartDefs) makeHover(c.canvas, () => c, (i) => redrawChart(c, i));
+makeHover($('#chart-metric'), metricDef, (i) => drawMetricChart(i));
 /* ---------- Cartes de synthèse (façon dashboard k6) ---------- */
 
 const CARDS = [
@@ -475,6 +579,7 @@ function renderWorkers(list) {
 
 function syncReportButtons() {
   const has = !!els.sessionSelect.value;
+  els.btnReportHtml.disabled = !has;
   els.btnReportJson.disabled = !has;
   els.btnReportTxt.disabled = !has;
   els.rawWorkerSelect.disabled = !has;
@@ -577,6 +682,8 @@ socket.on('disconnect', () => els.led.classList.remove('on'));
 function applySessionState(s) {
   if (!s) return;
   const hijack = s.status === 'RUNNING' && s.id !== activeSessionId;
+  if (s.status === 'RUNNING') runningSessionId = s.id;
+  else if (s.id === runningSessionId) runningSessionId = null;
   if (hijack) {
     // Un nouveau test repart : la vue repasse dessus (même si l'utilisateur
     // regardait une autre session).
@@ -632,6 +739,7 @@ socket.on('ui:metrics_replay', ({ session, rows: replayRows }) => {
     resetAll();
   }
   rows = replayRows || [];
+  if (rows.length) lastRowAt = Date.now();
   syncMetricSelect();
   updateMetricTable();
   drawCharts();
@@ -654,6 +762,7 @@ socket.on('ui:metrics', ({ session, running, row }) => {
     }
   }
   rows.push(row);
+  lastRowAt = Date.now();
   if (rows.length > HISTORY_MAX) rows.shift();
   syncMetricSelect();
   updateMetricTable();
@@ -671,15 +780,25 @@ els.form.addEventListener('submit', async (e) => {
   els.btnStart.disabled = true;
   els.formStatus.className = 'form-status';
   els.formStatus.textContent = 'Envoi…';
+  // Le script est soit collé, soit pointé par un fichier .js (lu par l'orchestrateur)
+  const scriptPath = els.scriptPath.value.trim();
+  if (!scriptPath && !els.script.value.trim()) {
+    els.formStatus.className = 'form-status err';
+    els.formStatus.textContent = 'Aucun script : collez du code k6 ou indiquez un fichier .js.';
+    els.btnStart.disabled = false;
+    return;
+  }
+  const payload = {
+    totalVus: Math.max(1, parseInt(els.totalVus.value, 10) || 1),
+    duration: els.duration.value.trim() || '30s'
+  };
+  if (scriptPath) payload.scriptPath = scriptPath;
+  else payload.scriptContent = els.script.value;
   try {
     const res = await fetch('/api/test/start', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        scriptContent: els.script.value,
-        totalVus: Math.max(1, parseInt(els.totalVus.value, 10) || 1),
-        duration: els.duration.value.trim() || '30s'
-      })
+      body: JSON.stringify(payload)
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
@@ -687,9 +806,12 @@ els.form.addEventListener('submit', async (e) => {
     userPinnedId = null;
     activeSessionId = data.sessionId;
     resetAll();
+    // Refresh forcé : l'orchestrateur rejoue l'historique de la session → les
+    // graphiques, cartes et tableau sont garantis à jour dès la relance.
+    socket.emit('ui:show_session', { session: data.sessionId });
     refreshSessions(data.sessionId);
     els.formStatus.className = 'form-status ok';
-    els.formStatus.textContent = `Test lancé — ${data.workersCibles} worker(s) ciblé(s), session ${data.sessionId}.`;
+    els.formStatus.textContent = `${scriptPath ? `Fichier : ${scriptPath} — ` : ''}Test lancé — ${data.workersCibles} worker(s) ciblé(s), session ${data.sessionId}.`;
   } catch (err) {
     els.formStatus.className = 'form-status err';
     els.formStatus.textContent = err.message;
@@ -723,6 +845,20 @@ els.sessionSelect.addEventListener('change', () => {
   syncReportButtons();
   syncRawWorkerSelect();
 });
+
+// Garde-fou « refresh forcé » : pendant un test en cours, si le flux live ne
+// parvient plus à la vue (reconnexion ratée, état manqué, onglet endormi…),
+// on redemande à l'orchestrateur l'historique de la session en cours : les
+// graphiques, cartes et tableau redeviennent à jour automatiquement.
+setInterval(() => {
+  if (!runningSessionId || userPinnedId !== null || activeSessionId !== runningSessionId) return;
+  const now = Date.now();
+  if (now - lastResyncAt < 5000) return;
+  const stale = lastRowAt === 0 ? now - lastResyncAt > 4000 : now - lastRowAt > 3500;
+  if (!stale) return;
+  lastResyncAt = now;
+  socket.emit('ui:show_session', { session: runningSessionId });
+}, 1000);
 els.rawWorkerSelect.addEventListener('change', syncReportButtons);
 els.metricSelect.addEventListener('change', () => {
   drawMetricChart();
@@ -740,6 +876,7 @@ els.autoScroll.addEventListener('change', () => {
   }
 });
 
+els.btnReportHtml.addEventListener('click', () => downloadReport('html'));
 els.btnReportJson.addEventListener('click', () => downloadReport('json'));
 els.btnReportTxt.addEventListener('click', () => downloadReport('txt'));
 els.btnReportRaw.addEventListener('click', downloadRaw);
