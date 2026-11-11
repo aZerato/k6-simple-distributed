@@ -1,10 +1,10 @@
-// Ce script déclenche un test de charge via l'API de l'orchestrateur.
+// This script triggers a load test via the orchestrator's API.
 import fs from 'fs';
 
 const payload = {
-  totalVus: 200,                  // Charge globale voulue
-  duration: '45s',                // Durée du test
-  scriptContent: fs.readFileSync('./basic.test.js', 'utf8') // Lecture automatique
+  totalVus: 200,                  // Desired global load
+  duration: '45s',                // Test duration
+  scriptContent: fs.readFileSync('./basic.test.js', 'utf8') // Automatic read
 };
 
 fetch('http://localhost:3000/api/test/start', {
@@ -13,5 +13,5 @@ fetch('http://localhost:3000/api/test/start', {
   body: JSON.stringify(payload)
 })
 .then(res => res.json())
-.then(data => console.log('Réponse de l\'orchestrateur :', data))
-.catch(err => console.error('Erreur :', err));
+.then(data => console.log('Orchestrator response:', data))
+.catch(err => console.error('Error:', err));

@@ -10,22 +10,22 @@ const ORCHESTRATOR_URL = process.env.ORCHESTRATOR_URL || 'http://localhost:3000'
 const WORKER_ID = process.env.WORKER_ID || `worker-${Math.random().toString(36).substring(2, 9)}`;
 const HTTP_PORT = process.env.PORT || 4000;
 const SCRIPT_TMP_PATH = path.join(os.tmpdir(), `k6_script_${WORKER_ID}.js`);
-// Fichier temporaire qui reçoit les métriques brutes de k6 (`--out json=`),
-// relu ligne à ligne puis streamé vers l'orchestrateur pour les graphiques.
+// Temporary file that receives the raw k6 metrics (`--out json=`),
+// re-read line by line and streamed to the orchestrator for the charts.
 const METRICS_TMP_PATH = path.join(os.tmpdir(), `k6_metrics_${WORKER_ID}.json`);
 
 const app = express();
 let currentK6Process = null;
 let isRunning = false;
 
-// --- État du streaming des métriques ---
-let metricsOffset = 0;      // position de lecture dans le fichier de métriques
-let metricsPending = '';   // dernier fragment de ligne non terminé
-let metricsBuffer = [];   // lignes en attente d'envoi
-let metricsTimer = null;  // intervalle de vidange périodique
-const MAX_BUFFERED_METRICS = 100000; // garde-fou si l'orchestrateur est injoignable
+// --- Metrics streaming state ---
+let metricsOffset = 0;      // read position in the metrics file
+let metricsPending = '';   // last unfinished line fragment
+let metricsBuffer = [];   // lines waiting to be sent
+let metricsTimer = null;  // periodic drain interval
+const MAX_BUFFERED_METRICS = 100000; // safety cap if the orchestrator is unreachable
 
-// --- EXPOSE UN ENDPOINT HTTP POUR LES BILANS DE SANTÉ (HEALTHCHECK) ---
+// --- HTTP ENDPOINT FOR HEALTH CHECKS ---
 app.get('/health', (req, res) => {
   res.json({
     workerId: WORKER_ID,
@@ -35,11 +35,11 @@ app.get('/health', (req, res) => {
 });
 
 const server = app.listen(HTTP_PORT, () => {
-  console.log(`[Worker] Serveur HTTP d'appoint démarré sur le port ${HTTP_PORT}`);
+  console.log(`[Worker] Standby HTTP server started on port ${HTTP_PORT}`);
 });
 
-// --- CONNEXION TEMPS RÉEL À L'ORCHESTRATEUR (WEBSOCKET) ---
-console.log(`[Worker] Connexion à l'orchestrateur sur ${ORCHESTRATOR_URL}...`);
+// --- REAL-TIME CONNECTION TO THE ORCHESTRATOR (WEBSOCKET) ---
+console.log(`[Worker] Connecting to the orchestrator on ${ORCHESTRATOR_URL}...`);
 const socket = io(ORCHESTRATOR_URL, {
   auth: { workerId: WORKER_ID },
   reconnection: true,
@@ -48,19 +48,19 @@ const socket = io(ORCHESTRATOR_URL, {
 });
 
 socket.on('connect', () => {
-  console.log(`[Worker] Connecté avec succès à l'orchestrateur sous l'ID : ${WORKER_ID}`);
+  console.log(`[Worker] Connected successfully to the orchestrator with ID: ${WORKER_ID}`);
   socket.emit('worker:ready', { status: isRunning ? 'BUSY' : 'AVAILABLE' });
 });
 
 socket.on('disconnect', () => {
-  console.warn('[Worker] Déconnecté de l\'orchestrateur. Tentative de reconnexion...');
+  console.warn('[Worker] Disconnected from the orchestrator. Attempting to reconnect...');
 });
 
-// --- STREAMING DES MÉTRIQUES k6 (fichier `--out json=`) ---
+// --- k6 METRICS STREAMING (the `--out json=` file) ---
 function drainMetricsFile() {
   if (!isRunning) return;
   let st;
-  try { st = fs.statSync(METRICS_TMP_PATH); } catch { return; } // pas encore de fichier
+  try { st = fs.statSync(METRICS_TMP_PATH); } catch { return; } // file does not exist yet
   if (st.size <= metricsOffset) return;
 
   const fd = fs.openSync(METRICS_TMP_PATH, 'r');
@@ -74,13 +74,13 @@ function drainMetricsFile() {
 
   const text = metricsPending + buf.toString('utf-8');
   const parts = text.split('\n');
-  metricsPending = parts.pop(); // conserve le fragment éventuellement incomplet
+  metricsPending = parts.pop(); // keep the potentially incomplete fragment
   for (const raw of parts) {
     const line = raw.trim();
     if (!line) continue;
     let item;
     try { item = JSON.parse(line); } catch {
-      console.warn(`[Worker] Ligne de métriques illisible, ignorée : ${line.slice(0, 120)}`);
+      console.warn(`[Worker] Unreadable metrics line, ignored: ${line.slice(0, 120)}`);
       continue;
     }
     metricsBuffer.push(item);
@@ -89,58 +89,58 @@ function drainMetricsFile() {
   if (socket.connected) {
     if (metricsBuffer.length) socket.emit('worker:metrics', { data: metricsBuffer.splice(0) });
   } else if (metricsBuffer.length > MAX_BUFFERED_METRICS) {
-    // L'orchestrateur est hors ligne : on garde les dernières valeurs pour ne pas saturer la RAM
-    console.warn('[Worker] Buffer de métriques saturé (orchestrateur injoignable) — anciennes valeurs abandonnées.');
+    // The orchestrator is offline: keep only the latest values so we do not saturate the RAM
+    console.warn('[Worker] Metrics buffer saturated (orchestrator unreachable) — oldest values dropped.');
     metricsBuffer.splice(0, metricsBuffer.length - MAX_BUFFERED_METRICS);
   }
 }
 
-// --- ENTRÉE : ORDRE DE LANCEMENT D'UN TEST ---
+// --- INBOUND: TEST START ORDER ---
 socket.on('orchestrator:start_test', (payload) => {
   if (isRunning) {
-    return socket.emit('worker:error', { message: 'Le worker est déjà occupé par un test.' });
+    return socket.emit('worker:error', { message: 'The worker is already busy with a test.' });
   }
 
   const { scriptContent, vus, duration, envVariables } = payload;
 
   if (!scriptContent) {
-    return socket.emit('worker:error', { message: 'Le contenu du script k6 est manquant.' });
+    return socket.emit('worker:error', { message: 'The k6 script content is missing.' });
   }
 
-  // 1. Validation stricte des arguments pour interdire l'injection de commandes
+  // 1. Strict validation of the arguments to forbid command injection
   const safeVus = String(parseInt(vus, 10) || 1);
   const safeDuration = /^[0-9]+[smh]$/.test(duration) ? duration : '10s';
 
-  console.log(`[Worker] Préparation du test k6 (${safeVus} VUs, ${safeDuration})`);
+  console.log(`[Worker] Preparing the k6 test (${safeVus} VUs, ${safeDuration})`);
   isRunning = true;
   socket.emit('worker:status_changed', { status: 'BUSY' });
 
-  // 2. Écriture sécurisée du script k6 éphémère
+  // 2. Secure writing of the ephemeral k6 script
   try {
     fs.writeFileSync(SCRIPT_TMP_PATH, scriptContent, 'utf-8');
   } catch (err) {
-    console.error('[Worker] Échec d\'écriture du script temporaire', err);
+    console.error('[Worker] Failed to write the temporary script', err);
     isRunning = false;
     socket.emit('worker:status_changed', { status: 'AVAILABLE' });
-    return socket.emit('worker:error', { message: 'Impossible d\'initialiser le fichier de script.' });
+    return socket.emit('worker:error', { message: 'Could not initialize the script file.' });
   }
 
-  // 3. Préparation du streaming des métriques (fichier vide + offsets à zéro)
-  try { fs.unlinkSync(METRICS_TMP_PATH); } catch { /* première exécution */ }
+  // 3. Metrics streaming preparation (empty file + zeroed offsets)
+  try { fs.unlinkSync(METRICS_TMP_PATH); } catch { /* first run */ }
   metricsOffset = 0;
   metricsPending = '';
   metricsBuffer = [];
 
-  // 4. Construction sécurisée de l'environnement
+  // 4. Secure construction of the environment
   const k6Env = {
     ...process.env,
     ...envVariables,
-    K6_NO_USAGE_REPORT: 'true' // Optionnel : désactive le ping télémétrique de k6
+    K6_NO_USAGE_REPORT: 'true' // Optional: disables k6's telemetry ping
   };
 
-  // 5. Lancement isolé de k6 (shell: false empêche l'évaluation de chaînes malveillantes)
-  //    `--out json=` : les points de données bruts sont écrits dans un fichier,
-  //    qu'on relu ligne à ligne pour alimenter les graphiques de la console.
+  // 5. Isolated launch of k6 (shell: false prevents the evaluation of malicious strings)
+  //    `--out json=`: the raw data points are written to a file,
+  //    which we re-read line by line to feed the console charts.
   const k6Binary = os.platform() === 'win32' ? 'k6.exe' : 'k6';
 
   currentK6Process = spawn(k6Binary, [
@@ -154,12 +154,12 @@ socket.on('orchestrator:start_test', (payload) => {
     env: k6Env
   });
 
-  console.log(`[Worker] Processus k6 démarré (PID: ${currentK6Process.pid})`);
+  console.log(`[Worker] k6 process started (PID: ${currentK6Process.pid})`);
 
-  // Vidange périodique du fichier de métriques vers l'orchestrateur
+  // Periodic drain of the metrics file toward the orchestrator
   metricsTimer = setInterval(drainMetricsFile, 500);
 
-  // 6. Streaming des logs stdout et stderr en temps réel
+  // 6. Real-time streaming of the stdout and stderr logs
   currentK6Process.stdout.on('data', (data) => {
     socket.emit('worker:log', { type: 'stdout', output: data.toString() });
   });
@@ -168,49 +168,49 @@ socket.on('orchestrator:start_test', (payload) => {
     socket.emit('worker:log', { type: 'stderr', output: data.toString() });
   });
 
-  // 7. Gestion de la fin naturelle ou de l'erreur du processus
+  // 7. Handling of the natural end or of an error of the process
   currentK6Process.on('error', (err) => {
-    console.error('[Worker] Erreur système lors de l\'exécution de k6:', err);
-    socket.emit('worker:log', { type: 'stderr', output: `Erreur interne du binaire k6 : ${err.message}` });
+    console.error('[Worker] System error while running k6:', err);
+    socket.emit('worker:log', { type: 'stderr', output: `Internal error of the k6 binary: ${err.message}` });
   });
 
   currentK6Process.on('close', (code) => {
-    console.log(`[Worker] Processus k6 terminé avec le code : ${code}`);
+    console.log(`[Worker] k6 process finished with code: ${code}`);
 
-    // Vidange finale puis arrêt du streaming des métriques
+    // Final drain, then stop the metrics streaming
     if (metricsTimer) { clearInterval(metricsTimer); metricsTimer = null; }
     drainMetricsFile();
 
-    // Nettoyage des fichiers temporaires
+    // Cleanup of the temporary files
     for (const p of [SCRIPT_TMP_PATH, METRICS_TMP_PATH]) {
       try {
         if (fs.existsSync(p)) fs.unlinkSync(p);
       } catch (e) {
-        console.warn(`[Worker] Impossible de supprimer ${p}:`, e.message);
+        console.warn(`[Worker] Could not delete ${p}:`, e.message);
       }
     }
 
     currentK6Process = null;
     isRunning = false;
 
-    // Notification de fin à l'orchestrateur
+    // End notification to the orchestrator
     socket.emit('worker:test_finished', { exitCode: code });
     socket.emit('worker:status_changed', { status: 'AVAILABLE' });
   });
 });
 
-// --- ENTRÉE : ORDRE D'ARRÊT D'URGENCE (STOP) ---
+// --- INBOUND: EMERGENCY STOP ORDER ---
 socket.on('orchestrator:stop_test', () => {
   if (!currentK6Process) {
-    return console.log('[Worker] Aucun test en cours à arrêter.');
+    return console.log('[Worker] No test in progress to stop.');
   }
 
-  console.log(`[Worker] Arrêt forcé demandé pour le processus k6 (PID: ${currentK6Process.pid})`);
-  // Envoi d'un signal SIGINT à k6 pour qu'il s'arrête proprement (ou SIGKILL si nécessaire)
+  console.log(`[Worker] Forced stop requested for the k6 process (PID: ${currentK6Process.pid})`);
+  // Send a SIGINT signal to k6 so it stops gracefully (or SIGKILL if necessary)
   currentK6Process.kill('SIGINT');
 });
 
-// --- NETTOYAGE LORS DE LA FERMETURE DU WORKER ---
+// --- CLEANUP ON WORKER SHUTDOWN ---
 process.on('SIGTERM', () => {
   if (currentK6Process) currentK6Process.kill('SIGKILL');
   server.close();

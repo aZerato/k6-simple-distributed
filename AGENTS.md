@@ -1,72 +1,72 @@
-# Architecture des Agents k6 Distribués (Node.js & WebSockets)
+# Architecture of Distributed k6 Agents (Node.js & WebSockets)
 
-Ce document décrit l'architecture et le protocole de communication en temps réel entre l'**Orchestrateur** et les **Workers (Agents)** pour l'exécution distribuée de tests de charge k6, sans dépendre de Kubernetes.
+This document describes the architecture and the real-time communication protocol between the **Orchestrator** and the **Workers (Agents)** for the distributed execution of k6 load tests, without depending on Kubernetes.
 
-## 1. Vue d'Ensemble de l'Architecture
+## 1. Architecture Overview
 
-Le système repose sur un modèle d'agents connectés en continu à l'orchestrateur via le protocole **WebSocket**. 
+The system is based on an agent model continuously connected to the orchestrator via the **WebSocket** protocol.
 
 ```
 +------------------------------------------------------------+
-|                        ORCHESTRATEUR                       |
-|  (Serveur central avec Dashboard / Interface de Contrôle)   |
+|                        ORCHESTRATOR                        |
+| (Central server with Dashboard / Control Interface)         |
 +-----------------------------+------------------------------+
                               |
          +--------------------+--------------------+
-         | Connexion WebSocket bidirectionnelle    |
+         | Bidirectional WebSocket connection        |
          v                                         v
 +-------------------------+               +-------------------------+
 |     WORKER (AGENT 1)    |               |     WORKER (AGENT 2)    |
 |  [Node.js / Express]    |               |  [Node.js / Express]    |
 |                         |               |                         |
 |  +-------------------+  |               |  +-------------------+  |
-|  | Processus k6      |  |               |  | Processus k6      |  |
+|  | k6 process        |  |               |  | k6 process        |  |
 |  +-------------------+  |               |  +-------------------+  |
 +-------------------------+               +-------------------------+
 ```
 
-### Avantages de cette approche :
-* **Temps réel :** L'orchestrateur connaît instantanément l'état de chaque worker (Disponible, En cours de test, Déconnecté).
-* **Flux de logs (Streaming) :** Les sorties consoles (`stdout`/`stderr`) de k6 sont capturées ligne par ligne et renvoyées à l'orchestrateur pour un affichage en direct.
-* **Sécurité anti-injection :** Les workers n'acceptent pas de commandes système brutes. Ils exécutent *uniquement* le binaire officiel `k6` via des paramètres contrôlés.
+### Advantages of this approach:
+* **Real-time:** The orchestrator instantly knows the state of each worker (Available, Test in progress, Disconnected).
+* **Log streaming:** The console outputs (`stdout`/`stderr`) of k6 are captured line by line and sent back to the orchestrator for live display.
+* **Anti-injection security:** The workers do not accept raw system commands. They run *only* the official `k6` binary via controlled parameters.
 
 ---
 
-## 2. Cycle de Vie d'un Test (Flux WebSocket)
+## 2. Test Lifecycle (WebSocket Flow)
 
-1. **Connexion & Enregistrement :** Au démarrage, le worker Node.js se connecte à l'orchestrateur et s'enregistre (ex: `agent-zone-europe-1`).
-2. **Ordre de test (`START_TEST`) :** L'orchestrateur envoie un payload JSON contenant le code du script k6 et les variables d'environnement ajustées pour ce worker (ex: nombre de VUs attribué).
-3. **Exécution sécurisée :** Le worker écrit le script JS dans un fichier temporaire local et lance k6 de manière isolée.
-4. **Remontée temps réel (`K6_LOG`) :** Chaque ligne générée par k6 est lue par Node.js et immédiatement poussée via WebSocket vers l'orchestrateur.
-5. **Fin de test (`TEST_FINISHED`) :** Une fois le processus k6 terminé, le worker renvoie le code de sortie (0 pour succès, ou code d'erreur) et repasse en état "Disponible".
-
----
-
-## 3. Sécurisation de l'Exécution (Contre l'injection de code)
-
-Pour interdire l'exécution de commandes système malveillantes (ex: `rm -rf /` ou `curl http://malicious...`), le code du worker Express/Node.js applique les règles strictes suivantes :
-
-* **Pas de Shell intermédiaire :** Le processus k6 est instancié via `child_process.spawn('k6', [...])` avec l'option `{ shell: false }`. Cela empêche l'injection d'opérateurs de commande comme `;`, `&&`, ou `|`.
-* **Sanitisation des arguments :** Les arguments passés à k6 (comme la durée ou le nombre de VUs) sont castés explicitement (ex: `parseInt()`) ou validés par une Regex stricte avant d'être injectés dans la commande.
-* **Fichier JS éphémère :** Le script JavaScript reçu est écrit tel quel dans un répertoire dédié à k6. k6 agissant comme un bac à sable JavaScript (sans accès aux API Node.js natives du système hôte comme `fs` ou `child_process`), le script ne peut pas compromettre la machine du worker.
+1. **Connection & Registration:** At startup, the Node.js worker connects to the orchestrator and registers itself (e.g. `agent-zone-europe-1`).
+2. **Test order (`START_TEST`):** The orchestrator sends a JSON payload containing the k6 script code and the environment variables tailored for this worker (e.g. the number of assigned VUs).
+3. **Secure execution:** The worker writes the JS script into a local temporary file and launches k6 in isolation.
+4. **Real-time upload (`K6_LOG`):** Every line generated by k6 is read by Node.js and immediately pushed over WebSocket to the orchestrator.
+5. **End of test (`TEST_FINISHED`):** Once the k6 process is done, the worker sends back the exit code (0 for success, or an error code) and goes back to the "Available" state.
 
 ---
 
-## 4. Spécification Technique du Worker Node.js
+## 3. Execution Hardening (Against code injection)
 
-Chaque agent embarque une application Node.js légère combinant **Express** (pour les bilans de santé (Healthchecks) et les configurations) et **ws** / **socket.io** (pour le canal de commande).
+To forbid the execution of malicious system commands (e.g. `rm -rf /` or `curl http://malicious...`), the worker's Express/Node.js code applies the following strict rules:
 
-### Exemple conceptuel de l'exécution dans le Worker :
+* **No intermediate Shell:** The k6 process is instantiated via `child_process.spawn('k6', [...])` with the `{ shell: false }` option. This prevents the injection of command operators such as `;`, `&&`, or `|`.
+* **Argument sanitization:** The arguments passed to k6 (such as the duration or the number of VUs) are explicitly cast (e.g. `parseInt()`) or validated by a strict Regex before being injected into the command.
+* **Ephemeral JS file:** The received JavaScript script is written as-is into a directory dedicated to k6. k6 acting as a JavaScript sandbox (with no access to the host system's native Node.js APIs such as `fs` or `child_process`), the script cannot compromise the worker's machine.
+
+---
+
+## 4. Technical Specification of the Node.js Worker
+
+Each agent ships a lightweight Node.js application combining **Express** (for health checks and configurations) and **ws** / **socket.io** (for the command channel).
+
+### Conceptual example of the execution in the Worker:
 
 ```javascript
-// Extraction sécurisée et contrôle des paramètres reçus de l'orchestrateur
-const safeVus = String(parseInt(payload.vus)); // Force un entier
-const safeDuration = /^[0-9]+[smh]\$/.test(payload.duration) ? payload.duration : '10s'; // Valide le format (ex: 5m, 30s)
+// Secure extraction and control of the parameters received from the orchestrator
+const safeVus = String(parseInt(payload.vus)); // Forces an integer
+const safeDuration = /^[0-9]+[smh]\$/.test(payload.duration) ? payload.duration : '10s'; // Validates the format (e.g. 5m, 30s)
 
-// Écriture du script k6 reçu de manière sécurisée
+// Secure writing of the received k6 script
 fs.writeFileSync('/tmp/test_load.js', payload.scriptJavaScript);
 
-// Lancement sécurisé (Pas de shell, arguments encapsulés dans un tableau)
+// Secure launch (no shell, arguments encapsulated in an array)
 const k6Process = spawn('k6', [
   'run', 
   '--vus', safeVus, 
@@ -74,7 +74,7 @@ const k6Process = spawn('k6', [
   '/tmp/test_load.js'
 ], { shell: false });
 
-// Capture et envoi des flux en temps réel à l'orchestrateur
+// Capture and real-time streaming of the outputs to the orchestrator
 k6Process.stdout.on('data', (data) => {
   webSocket.send(JSON.stringify({ event: 'K6_LOG', type: 'stdout', text: data.toString() }));
 });
@@ -90,8 +90,8 @@ k6Process.on('close', (code) => {
 
 ---
 
-## 5. Centralisation des Métriques de Performance
+## 5. Centralization of Performance Metrics
 
-Bien que les logs de la console (`stdout`) remontent en temps réel via le WebSocket pour le monitoring visuel, les métriques brutes de charge (temps de réponse, requêtes/sec) générées par k6 doivent être envoyées en parallèle vers un serveur de stockage externe de manière performante.
+Although the console logs (`stdout`) are streamed in real time over the WebSocket for visual monitoring, the raw load metrics (response times, requests/sec) generated by k6 must be sent in parallel to an external storage server, efficiently.
 
-Chaque worker configurera son exécution k6 pour pousser les métriques vers le stockage de votre choix (ex: InfluxDB, Prometheus Remote Write, ou même un serveur d'ingestion géré par votre orchestrateur) à l'aide de l'option `--out`.
+Each worker configures its k6 execution to push the metrics to the storage of your choice (e.g. InfluxDB, Prometheus Remote Write, or even an ingestion server managed by your orchestrator) using the `--out` option.
