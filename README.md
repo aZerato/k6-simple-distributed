@@ -42,12 +42,12 @@ Le binaire `k6` doit être accessible dans le PATH du système.
 
 Exécutez ces étapes sur l'ordinateur de l'Orchestrateur **et** sur chaque machine Worker.
 
-1. Créez un dossier pour le projet et placez-y les dossiers correspondants (`orchestrator` ou `worker`).
+1. Créez un dossier pour le projet et placez-y les dossiers correspondants selon la machine cible (`orchestrator` ou `worker`).
 2. Installez les dépendances :
    ```bash
    npm install
    ```
-3. Générez la console web (React / Next.js, dossier `web/`) :
+3. Pour l'orchestrateur, générez la console web (React / Next.js, dossier `web/`) :
    ```bash
    cd web
    npm install
