@@ -24,7 +24,7 @@ import { buildHtmlReport } from './reports/html.js';
 
 export function registerRoutes(app, io) {
   app.post('/api/test/start', (req, res) => {
-    const { scriptContent, scriptPath, totalVus, duration, envVariables } = req.body;
+    const { scriptContent, scriptPath, totalVus, duration, envVariables, workerIds } = req.body;
 
     // The script is pasted (`scriptContent`) or pointed to by a path (`scriptPath`):
     // the .js file is read on the orchestrator's machine (absolute path, or
@@ -67,22 +67,47 @@ export function registerRoutes(app, io) {
       });
     }
 
-    // Filter to keep only the available workers
-    const availableWorkers = Array.from(workersRegistry.values()).filter((w) => w.status === 'AVAILABLE');
+    // Targeted workers: explicit selection (`workerIds`), or by default every available worker
+    let selected = null;
+    if (Array.isArray(workerIds)) {
+      selected = workerIds.map((w) => String(w).trim()).filter(Boolean);
+    } else if (typeof workerIds === 'string' && workerIds.trim()) {
+      selected = workerIds.split(',').map((w) => w.trim()).filter(Boolean);
+    }
+    if (selected && selected.length === 0) {
+      return res.status(422).json({ error: 'No worker selected.' });
+    }
 
-    if (availableWorkers.length === 0) {
+    let targetWorkers;
+    if (selected) {
+      const ids = [...new Set(selected)];
+      for (const id of ids) {
+        const w = workersRegistry.get(id);
+        if (!w) {
+          return res.status(400).json({ error: `Unknown worker: ${id}` });
+        }
+        if (w.status !== 'AVAILABLE') {
+          return res.status(422).json({ error: `Worker not available at the moment: ${id}` });
+        }
+      }
+      targetWorkers = ids.map((id) => workersRegistry.get(id));
+    } else {
+      targetWorkers = Array.from(workersRegistry.values()).filter((w) => w.status === 'AVAILABLE');
+    }
+
+    if (targetWorkers.length === 0) {
       return res.status(422).json({ error: 'No worker is available at the moment.' });
     }
 
-    // Fair distribution of the Virtual Users (VUs)
-    const workersCount = availableWorkers.length;
+    // Fair distribution of the Virtual Users (VUs) over the targeted workers
+    const workersCount = targetWorkers.length;
     const baseVusPerWorker = Math.floor(totalVus / workersCount);
     const remainderVus = totalVus % workersCount;
 
     const session = createSession({ totalVus, duration });
 
-    // Send the tailored start order to each available worker
-    availableWorkers.forEach((worker, index) => {
+    // Send the tailored start order to each targeted worker
+    targetWorkers.forEach((worker, index) => {
       // The first worker gets the remainder of the division, if there is one
       const assignedVus = index === 0 ? baseVusPerWorker + remainderVus : baseVusPerWorker;
 
@@ -106,7 +131,7 @@ export function registerRoutes(app, io) {
       sessions.shift(); // Discard the empty session
       setCurrentSession(null);
       return res.status(422).json({
-        error: 'Distribution impossible: the total VUS is lower than the number of available workers.'
+        error: 'Distribution impossible: the total VUS is lower than the number of targeted workers.'
       });
     }
 
@@ -117,7 +142,8 @@ export function registerRoutes(app, io) {
     res.json({
       message: 'Distributed test initialized successfully',
       sessionId: session.id,
-      workersCibles: session.workers.size
+      workersCibles: session.workers.size,
+      workerIds: [...session.workers.keys()]
     });
   });
 

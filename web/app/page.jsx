@@ -41,6 +41,7 @@ export default function Page() {
             submitting={dash.submitting}
             onSubmit={dash.submitTest}
             onStop={dash.stopTest}
+            workers={dash.workers}
           />
         </aside>
         <section className="stage">

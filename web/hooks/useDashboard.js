@@ -374,7 +374,7 @@ export function useDashboard() {
 
   /* ---------- Controls: form, stop, clear, downloads ---------- */
 
-  const submitTest = async ({ scriptPath, scriptContent, totalVus, duration }) => {
+  const submitTest = async ({ scriptPath, scriptContent, totalVus, duration, workerIds }) => {
     setSubmitting(true);
     setFormStatus({ cls: '', text: 'Sending…' });
     // The script is either pasted or pointed to by a .js file (read by the orchestrator)
@@ -383,7 +383,15 @@ export function useDashboard() {
       setSubmitting(false);
       return;
     }
+    // Explicit worker selection: `workerIds` is the list of checked workers
+    // (the whole list when none was provided, e.g. an old console / API client).
+    if (workerIds && workerIds.length === 0) {
+      setFormStatus({ cls: 'err', text: 'No worker selected: tick at least one worker in the form.' });
+      setSubmitting(false);
+      return;
+    }
     const payload = { totalVus, duration };
+    if (workerIds) payload.workerIds = workerIds;
     if (scriptPath) payload.scriptPath = scriptPath;
     else payload.scriptContent = scriptContent;
     try {
