@@ -25,6 +25,9 @@ let metricsBuffer = [];   // lines waiting to be sent
 let metricsTimer = null;  // periodic drain interval
 const MAX_BUFFERED_METRICS = 100000; // safety cap if the orchestrator is unreachable
 
+// --- Data files (upload) state ---
+let assetFiles = []; // data files written next to the script (deleted at test end)
+
 // --- HTTP ENDPOINT FOR HEALTH CHECKS ---
 app.get('/health', (req, res) => {
   res.json({
@@ -101,7 +104,7 @@ socket.on('orchestrator:start_test', (payload) => {
     return socket.emit('worker:error', { message: 'The worker is already busy with a test.' });
   }
 
-  const { scriptContent, vus, duration, envVariables } = payload;
+  const { scriptContent, vus, duration, envVariables, attachments } = payload;
 
   if (!scriptContent) {
     return socket.emit('worker:error', { message: 'The k6 script content is missing.' });
@@ -123,6 +126,37 @@ socket.on('orchestrator:start_test', (payload) => {
     isRunning = false;
     socket.emit('worker:status_changed', { status: 'AVAILABLE' });
     return socket.emit('worker:error', { message: 'Could not initialize the script file.' });
+  }
+
+  // 2b. Data files (CSV, etc.) uploaded with the start order: written next to
+  //     the ephemeral script, so relative paths in the script (`open('./data.csv')`)
+  //     resolve like a local run.
+  const failStart = (message) => {
+    isRunning = false;
+    for (const f of assetFiles) { try { fs.unlinkSync(f); } catch { /* best effort */ } }
+    assetFiles = [];
+    socket.emit('worker:status_changed', { status: 'AVAILABLE' });
+    return socket.emit('worker:error', { message });
+  };
+  assetFiles = [];
+  if (attachments && typeof attachments === 'object') {
+    for (const [rawName, b64] of Object.entries(attachments)) {
+      const name = String(rawName).trim();
+      if (!name || name === '.' || name === '..' || name.includes('/') || name.includes('\\')) {
+        return failStart(`Invalid data file name: ${rawName}.`);
+      }
+      const file = path.join(os.tmpdir(), name);
+      if (file === SCRIPT_TMP_PATH || file === METRICS_TMP_PATH) {
+        return failStart(`Data file name collides with the worker's internal file: ${name}`);
+      }
+      try {
+        fs.writeFileSync(file, Buffer.from(String(b64), 'base64'));
+        assetFiles.push(file);
+      } catch (err) {
+        console.error('[Worker] Failed to write the data file', err);
+        return failStart(`Could not write the data file: ${name}.`);
+      }
+    }
   }
 
   // 3. Metrics streaming preparation (empty file + zeroed offsets)
@@ -181,8 +215,8 @@ socket.on('orchestrator:start_test', (payload) => {
     if (metricsTimer) { clearInterval(metricsTimer); metricsTimer = null; }
     drainMetricsFile();
 
-    // Cleanup of the temporary files
-    for (const p of [SCRIPT_TMP_PATH, METRICS_TMP_PATH]) {
+    // Cleanup of the temporary files (data files + script + metrics)
+    for (const p of [...assetFiles, SCRIPT_TMP_PATH, METRICS_TMP_PATH]) {
       try {
         if (fs.existsSync(p)) fs.unlinkSync(p);
       } catch (e) {

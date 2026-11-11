@@ -23,6 +23,11 @@ Before writing or modifying code, you must consult the relevant files in this di
 - You must update the corresponding Markdown file during the same working session.
 - Code and its documentation must always evolve together.
 
+4. E2E tests — run them & keep them up to date:
+- The orchestrator API is covered by ready-to-run E2E fixtures in `orchestrator/test/e2e/` (see its `README.md`): `t_*.json` payloads + `e2e_script.js`, driven by `run.js`.
+- You must **run** them and **keep them up to date**: whenever you change `POST /api/test/start` (a field, a status code, a selection/validation rule) or the worker-selection behavior, update the matching `t_*.json` / `e2e_script.js` and the expected code in `run.js` in the same working session, and run the runner to confirm.
+- The E2E fixtures must always mirror the current API (same obligation as the docs).
+
 ## 🚨 Rules
 
 - No Git Execution: Do not run any Git commands under any circumstances.

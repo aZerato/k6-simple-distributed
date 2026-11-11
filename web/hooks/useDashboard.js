@@ -396,7 +396,7 @@ export function useDashboard() {
 
   /* ---------- Controls: form, stop, clear, downloads ---------- */
 
-  const submitTest = async ({ scriptPath, scriptContent, totalVus, duration, workerIds }) => {
+  const submitTest = async ({ scriptPath, scriptContent, totalVus, duration, workerIds, attachments }) => {
     setSubmitting(true);
     setFormStatus({ cls: '', text: 'Sending…' });
     // The script is either pasted or pointed to by a .js file (read by the orchestrator)
@@ -416,6 +416,8 @@ export function useDashboard() {
     if (workerIds) payload.workerIds = workerIds;
     if (scriptPath) payload.scriptPath = scriptPath;
     else payload.scriptContent = scriptContent;
+    // Data files (CSV, etc.) uploaded in the form: sent to the workers' tmp dir
+    if (attachments && Object.keys(attachments).length) payload.attachments = attachments;
     try {
       const res = await fetch(`${API_BASE}/api/test/start`, {
         method: 'POST',

@@ -382,6 +382,19 @@ input::placeholder { color: var(--text-faint); }
 
 .wp .wp-st.busy { color: var(--amber); }
 
+.wp .wp-x {
+  margin-left: 6px;
+  background: none;
+  border: 0;
+  padding: 0;
+  color: var(--text-faint);
+  cursor: pointer;
+  font: inherit;
+  line-height: 1;
+}
+
+.wp .wp-x:hover { color: var(--red); }
+
 .wp-empty { color: var(--text-faint); font-size: 11px; font-style: italic; }
 
 /* ---------- Buttons ---------- */

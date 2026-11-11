@@ -1,5 +1,5 @@
 'use client';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 
 const DEFAULT_SCRIPT = [
   "import http from 'k6/http';",
@@ -14,6 +14,21 @@ const DEFAULT_SCRIPT = [
   '}'
 ].join('\n');
 
+const fmtBytes = (n) => (n < 1000 ? `${n} B` : n < 1e6 ? `${(n / 1e3).toFixed(1)} kB` : `${(n / 1e6).toFixed(2)} MB`);
+
+function fileToB64(file) {
+  return new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result).split(',')[1] || '');
+    reader.onerror = () => resolve('');
+    reader.readAsDataURL(file);
+  });
+}
+
+// Recent `.js` paths, kept in the browser to suggest them in the path input
+const SCRIPT_HISTORY_KEY = 'k6-script-path-history';
+const SCRIPT_HISTORY_MAX = 10;
+
 export default function TestForm({ formStatus, submitting, onSubmit, onStop, workers }) {
   const [scriptPath, setScriptPath] = useState('');
   const [script, setScript] = useState(DEFAULT_SCRIPT);
@@ -22,8 +37,35 @@ export default function TestForm({ formStatus, submitting, onSubmit, onStop, wor
   // workerId -> explicitly targeted. Absence (or `true`) = targeted: a worker
   // that (re)connects is ticked by default, so "all workers" stays the default.
   const [picks, setPicks] = useState({});
+  // Data files (CSV, etc.) uploaded to the workers: name -> { b64, size }
+  const [dataFiles, setDataFiles] = useState({});
+  // Script path history (datalist of the path input), kept in the browser
+  const [scriptHistory, setScriptHistory] = useState([]);
+
+  useEffect(() => {
+    try {
+      const raw = JSON.parse(localStorage.getItem(SCRIPT_HISTORY_KEY) || '[]');
+      if (Array.isArray(raw)) setScriptHistory(raw.filter((p) => typeof p === 'string'));
+    } catch { /* corrupted entry: start fresh */ }
+  }, []);
 
   const selected = (workers || []).filter((w) => picks[w.id] !== false);
+  const fileNames = Object.keys(dataFiles);
+
+  const addFiles = async (fileList) => {
+    for (const f of Array.from(fileList)) {
+      const b64 = await fileToB64(f);
+      setDataFiles((cur) => ({ ...cur, [f.name]: { b64, size: f.size } }));
+    }
+  };
+
+  const removeFile = (name) => {
+    setDataFiles((cur) => {
+      const next = { ...cur };
+      delete next[name];
+      return next;
+    });
+  };
 
   return (
     <section className="panel reveal d2">
@@ -32,12 +74,22 @@ export default function TestForm({ formStatus, submitting, onSubmit, onStop, wor
         id="test-form"
         onSubmit={(e) => {
           e.preventDefault();
+          const path = scriptPath.trim();
+          if (path) {
+            // Keep the recent .js paths (deduped, most recent first, capped)
+            const next = [path, ...scriptHistory.filter((p) => p !== path)].slice(0, SCRIPT_HISTORY_MAX);
+            setScriptHistory(next);
+            try { localStorage.setItem(SCRIPT_HISTORY_KEY, JSON.stringify(next)); } catch { /* storage unavailable */ }
+          }
           onSubmit({
-            scriptPath: scriptPath.trim(),
+            scriptPath: path,
             scriptContent: script,
             totalVus: Math.max(1, parseInt(totalVus, 10) || 1),
             duration: duration.trim() || '30s',
-            workerIds: selected.map((w) => w.id)
+            workerIds: selected.map((w) => w.id),
+            attachments: fileNames.length
+              ? Object.fromEntries(fileNames.map((n) => [n, dataFiles[n].b64]))
+              : undefined
           });
         }}
       >
@@ -46,10 +98,16 @@ export default function TestForm({ formStatus, submitting, onSubmit, onStop, wor
           <input
             id="script-path"
             type="text"
+            list="script-path-history"
             value={scriptPath}
             onChange={(e) => setScriptPath(e.target.value)}
             placeholder="e.g. C:\k6\script.js (optional)"
           />
+          <datalist id="script-path-history">
+            {scriptHistory.map((p) => (
+              <option key={p} value={p} />
+            ))}
+          </datalist>
           <span className="field-hint">
             If set, this takes precedence over the code pasted below. The file is read on the orchestrator's machine.
           </span>
@@ -73,6 +131,40 @@ export default function TestForm({ formStatus, submitting, onSubmit, onStop, wor
             <span className="field-label">Duration</span>
             <input id="duration" type="text" value={duration} onChange={(e) => setDuration(e.target.value)} />
           </label>
+        </div>
+        <div className="field">
+          <span className="field-label">
+            Data files (CSV, …)
+            {fileNames.length > 0 && (
+              <span className="field-quick">
+                <button type="button" className="qlink" onClick={() => setDataFiles({})}>Clear</button>
+              </span>
+            )}
+          </span>
+          <input
+            id="data-files"
+            type="file"
+            multiple
+            onChange={(e) => {
+              addFiles(e.target.files);
+              e.target.value = '';
+            }}
+          />
+          {fileNames.length > 0 && (
+            <div className="workers-pick">
+              {fileNames.map((n) => (
+                <span className="wp" key={n}>
+                  <span className="wp-name">{n}</span>
+                  <span className="wp-st">{fmtBytes(dataFiles[n].size)}</span>
+                  <button type="button" className="wp-x" title="Remove" onClick={() => removeFile(n)}>✕</button>
+                </span>
+              ))}
+            </div>
+          )}
+          <span className="field-hint">
+            Sent to every targeted worker and written next to the ephemeral script, so relative paths in the
+            script (e.g. `open('./data.csv')`) resolve like a local run.
+          </span>
         </div>
         <div className="field-row">
           <div className="field">
