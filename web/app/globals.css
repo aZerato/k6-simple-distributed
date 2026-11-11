@@ -505,6 +505,49 @@ input::placeholder { color: var(--text-faint); }
   display: block;
 }
 
+/* Charts toolbar: global curve-mode preset (merged / per worker / all) */
+.charts-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.charts-toolbar-label {
+  font: 600 10px 'Chakra Petch', sans-serif;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.mode-seg {
+  display: inline-flex;
+  border: 1px solid #223047;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #0a0f18;
+}
+
+.mode-btn {
+  background: none;
+  border: none;
+  border-right: 1px solid #223047;
+  color: var(--text-dim);
+  font: 500 11px 'IBM Plex Mono', monospace;
+  padding: 6px 12px;
+  cursor: pointer;
+  transition: color 0.15s, background 0.15s;
+}
+
+.mode-btn:last-child { border-right: none; }
+
+.mode-btn:hover { color: var(--text); }
+
+.mode-btn.on {
+  color: var(--accent);
+  background: rgba(70, 229, 177, 0.12);
+}
+
 .legend {
   display: inline-flex;
   align-items: center;

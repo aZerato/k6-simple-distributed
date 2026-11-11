@@ -33,7 +33,8 @@ export function useDashboard() {
   const socketRef = useRef(null);
   const rowsRef = useRef([]); // snapshots (ui:metrics) of the displayed session
   const workerIdsRef = useRef([]); // workers that produced metrics (order of appearance)
-  const seriesVisibleRef = useRef(new Map()); // series id -> visible
+  const seriesVisibleRef = useRef(new Map()); // series id -> manual override (checkbox)
+  const curveModeRef = useRef('fusion'); // global "curve mode": 'fusion' | 'workers' | 'all'
   const maxSeqRef = useRef(0); // deduplication of the replay
   const workerLogsRef = useRef(new Map()); // workerId -> [ { t, type, text } ]
   const activeWorkerRef = useRef(null); // selected logs tab
@@ -61,6 +62,8 @@ export function useDashboard() {
   const [metricNames, setMetricNames] = useState([]);
   const [metricName, setMetricName] = useState('');
   const [seriesVisible, setSeriesVisible] = useState(new Map());
+  // Global "curve mode": which curves are shown by default on every chart.
+  const [curveMode, setCurveModeState] = useState('fusion');
   const [sessionSelectValue, setSessionSelectValue] = useState('');
   const [rawWorkerValue, setRawWorkerValue] = useState('');
   const [activeWorker, setActiveWorker] = useState(null);
@@ -73,6 +76,7 @@ export function useDashboard() {
   const metricNameRef = useRef('');
   useEffect(() => { metricNameRef.current = metricName; }, [metricName]);
   useEffect(() => { seriesVisibleRef.current = seriesVisible; }, [seriesVisible]);
+  useEffect(() => { curveModeRef.current = curveMode; }, [curveMode]);
 
   /* ---------- Logs helpers ---------- */
 
@@ -312,18 +316,19 @@ export function useDashboard() {
 
   const drawAll = useCallback(() => {
     const rows = rowsRef.current;
-    const visible = seriesVisibleRef.current;
+    const mode = curveModeRef.current;
+    const manual = seriesVisibleRef.current;
     const wids = workerIdsRef.current;
     const canvases = canvasRefs.current;
 
     for (const c of CHART_DEFS) {
       const el = canvases[c.key];
-      if (el) drawSeries(el, c, { rows, workerIds: wids, visible });
+      if (el) drawSeries(el, c, { rows, workerIds: wids, mode, manual });
     }
     const mel = canvases['metric'];
     if (mel) {
       if (!metricNameRef.current) prep(mel);
-      else drawSeries(mel, metricDef(metricNameRef.current), { rows, workerIds: wids, visible });
+      else drawSeries(mel, metricDef(metricNameRef.current), { rows, workerIds: wids, mode, manual });
     }
     // Is the cursor hovering a chart? We keep the marker stable during live refreshes
     if (hoverRef.current) hoverRef.current.redraw(hoverRef.current.index);
@@ -337,6 +342,23 @@ export function useDashboard() {
     }
   }, []);
 
+  /* Redraw the canvases whenever one of them changes size (session switch,
+     layout shift, window resize, DPI change): the curves are then always drawn
+     at the right size, without having to move the window by hand. */
+  useEffect(() => {
+    if (typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(() => drawAll());
+    const t = requestAnimationFrame(() => {
+      for (const el of Object.values(canvasRefs.current)) {
+        if (el) ro.observe(el);
+      }
+    });
+    return () => {
+      cancelAnimationFrame(t);
+      ro.disconnect();
+    };
+  }, [drawAll]);
+
   /* ---------- Chart hovering (value at time t) ---------- */
 
   useEffect(() => {
@@ -347,7 +369,7 @@ export function useDashboard() {
       if (!canvas) return;
       const getSeries = () => buildSeries(defFactory(), workerIdsRef.current);
       const redraw = (i) => {
-        drawSeries(canvas, defFactory(), { rows: rowsRef.current, workerIds: workerIdsRef.current, visible: seriesVisibleRef.current, hoverIndex: i });
+        drawSeries(canvas, defFactory(), { rows: rowsRef.current, workerIds: workerIdsRef.current, mode: curveModeRef.current, manual: seriesVisibleRef.current, hoverIndex: i });
       };
       canvas.addEventListener('mousemove', (e) => {
         const n = rowsRef.current.length;
@@ -359,7 +381,7 @@ export function useDashboard() {
         const r = rowsRef.current[i];
         // Value of ALL visible series at time t (merged + workers)
         const html = `<span class="tt">${timeLabel(r.t)}</span>` +
-          getSeries().filter((s) => isSeriesOn(seriesVisibleRef.current, s.id)).map((s) => `<br>${s.label} : ${s.fmt(s.get(r))}`).join('');
+          getSeries().filter((s) => isSeriesOn(curveModeRef.current, seriesVisibleRef.current, s)).map((s) => `<br>${s.label} : ${s.fmt(s.get(r))}`).join('');
         showChartTip(tipEl, e, html);
       });
       canvas.addEventListener('mouseleave', () => {
@@ -478,6 +500,13 @@ export function useDashboard() {
     // Series / metric
     workerIds,
     seriesVisible,
+    curveMode,
+    setCurveMode: (mode) => {
+      // A preset: it clears the manual per-series overrides (checkboxes)
+      seriesVisibleRef.current = new Map();
+      setSeriesVisible(new Map());
+      setCurveModeState(mode);
+    },
     setSeriesOn: (id, on) => {
       const m = new Map(seriesVisibleRef.current);
       m.set(id, on);

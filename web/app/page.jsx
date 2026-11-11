@@ -19,7 +19,7 @@ export default function Page() {
   useEffect(() => {
     dash.drawAll();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dash.rowsRev, dash.workerIds, dash.seriesVisible, dash.metricName, dash.drawAll]);
+  }, [dash.rowsRev, dash.workerIds, dash.seriesVisible, dash.curveMode, dash.metricName, dash.drawAll]);
 
   // Redraw on window resize (same as the legacy console)
   useEffect(() => {
@@ -50,12 +50,15 @@ export default function Page() {
             workerIds={dash.workerIds}
             seriesVisible={dash.seriesVisible}
             onToggle={dash.setSeriesOn}
+            curveMode={dash.curveMode}
+            onModeChange={dash.setCurveMode}
             canvasRefs={dash.canvasRefs}
           />
           <MetricExplorer
             rows={rows}
             workerIds={dash.workerIds}
             seriesVisible={dash.seriesVisible}
+            curveMode={dash.curveMode}
             metricName={dash.metricName}
             metricNames={dash.metricNames}
             onMetricChange={dash.setMetricName}

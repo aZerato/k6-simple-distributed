@@ -166,7 +166,8 @@ export function buildSeries(c, workerIds) {
   const out = [];
   c.fusion.forEach((f, i) => {
     out.push({
-      id: `f-${i}`,
+      id: `${c.key}/f-${i}`,
+      kind: 'fusion',
       label: f.label,
       color: c.colors[i],
       dash: null,
@@ -179,7 +180,8 @@ export function buildSeries(c, workerIds) {
     const col = workerColor(wi);
     c.workerRoles.forEach((role, ri) => {
       out.push({
-        id: `w-${wi}-${ri}`,
+        id: `${c.key}/w-${wi}-${ri}`,
+        kind: 'worker',
         label: `${wid} · ${role.label}`,
         color: col,
         dash: ri > 0 ? '4 4' : null,
@@ -192,12 +194,21 @@ export function buildSeries(c, workerIds) {
   return out;
 }
 
-// Visibility of a series (default: shown).
-export const isSeriesOn = (visible, id) => visible.get(id) !== false;
+// Visibility of a series: an explicit per-series override (checkbox) wins,
+// otherwise the global "curve mode" decides —
+//   fusion  : merged curves only
+//   workers : per-worker curves only
+//   all     : merged + per-worker curves
+export const isSeriesOn = (mode, manual, s) => {
+  if (manual.has(s.id)) return manual.get(s.id);
+  return s.kind === 'fusion'
+    ? (mode === 'fusion' || mode === 'all')
+    : (mode === 'workers' || mode === 'all');
+};
 
 // Drawing of a chart: visible series + values over the `rows`.
-export function drawSeries(canvas, c, { rows, workerIds, visible, hoverIndex = -1 }) {
-  const series = buildSeries(c, workerIds).filter((s) => isSeriesOn(visible, s.id));
+export function drawSeries(canvas, c, { rows, workerIds, mode, manual, hoverIndex = -1 }) {
+  const series = buildSeries(c, workerIds).filter((s) => isSeriesOn(mode, manual, s));
   const vals = series.map((s) => rows.map((r) => s.get(r)));
   drawLines(canvas, rows, series, vals, hoverIndex);
 }
