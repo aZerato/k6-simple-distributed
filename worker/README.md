@@ -39,7 +39,7 @@ no state machine — the process only speaks the socket protocol.
 
 | Event                   | Payload                                    | Worker action                       |
 |-------------------------|--------------------------------------------|-------------------------------------|
-| `orchestrator:start_test` | `{ scriptContent, vus, duration, envVariables }` | Writes the tmp script, spawns k6 (refused if busy) |
+| `orchestrator:start_test` | `{ scriptContent, vus, duration, envVariables, attachments }` | Writes the tmp script + uploaded data files, spawns k6 (refused if busy) |
 | `orchestrator:stop_test` | —                                       | `SIGINT` to the running k6 process  |
 
 **Outbound** (worker → orchestrator):
@@ -61,6 +61,10 @@ no state machine — the process only speaks the socket protocol.
   `duration` must match `/^[0-9]+[smh]$/` (fallback `10s`).
 * **Sandboxed script:** the received script is written as-is to a per-worker
   tmp file; k6 is the JS sandbox (no access to the host's Node.js APIs).
+* **Data files (upload):** `attachments` names are sanitized (no path
+  separators, no `.` / `..`), written next to the ephemeral script so relative
+  paths in the script (`open('./data.csv')`) resolve like a local run, and
+  deleted at test end.
 * `K6_NO_USAGE_REPORT=true` disables k6's telemetry.
 * One test at a time: a `start_test` while BUSY answers `worker:error`.
 

@@ -18,13 +18,14 @@ import {
   broadcastWorkers
 } from './state.js';
 import { findNodeBuiltinImport } from './scripts.js';
+import { MAX_ATTACHMENTS_TOTAL_BYTES } from './constants.js';
 import { buildJsonReport } from './reports/json.js';
 import { buildTxtReport } from './reports/txt.js';
 import { buildHtmlReport } from './reports/html.js';
 
 export function registerRoutes(app, io) {
   app.post('/api/test/start', (req, res) => {
-    const { scriptContent, scriptPath, totalVus, duration, envVariables, workerIds } = req.body;
+    const { scriptContent, scriptPath, totalVus, duration, envVariables, workerIds, attachments } = req.body;
 
     // The script is pasted (`scriptContent`) or pointed to by a path (`scriptPath`):
     // the .js file is read on the orchestrator's machine (absolute path, or
@@ -59,6 +60,36 @@ export function registerRoutes(app, io) {
 
     if (!content || !totalVus || !duration) {
       return res.status(400).json({ error: 'Missing parameters (scriptContent or scriptPath, totalVus, duration).' });
+    }
+
+    // Data files (CSV, etc.) referenced by relative path in the script
+    // (e.g. `open('./data.csv')`): sent to every targeted worker and written
+    // next to the ephemeral script, so the path resolves like a local run.
+    let dataFiles = null;
+    if (attachments) {
+      if (typeof attachments !== 'object' || Array.isArray(attachments)) {
+        return res.status(400).json({ error: '`attachments` must be an object: { "data.csv": "<base64>" }.' });
+      }
+      const entries = Object.entries(attachments);
+      if (entries.length > 20) {
+        return res.status(400).json({ error: 'At most 20 data files per test.' });
+      }
+      dataFiles = {};
+      let total = 0;
+      for (const [rawName, b64] of entries) {
+        const name = String(rawName).trim();
+        if (!name || name === '.' || name === '..' || name.includes('/') || name.includes('\\') || name.includes('\0')) {
+          return res.status(400).json({ error: `Invalid data file name: '${rawName}'.` });
+        }
+        if (typeof b64 !== 'string' || !b64) {
+          return res.status(400).json({ error: `Data file '${name}': the content must be a base64 string.` });
+        }
+        total += Math.floor((b64.length * 3) / 4);
+        if (total > MAX_ATTACHMENTS_TOTAL_BYTES) {
+          return res.status(413).json({ error: `Data files too large (${MAX_ATTACHMENTS_TOTAL_BYTES / (1024 * 1024)} MB total cap).` });
+        }
+        dataFiles[name] = b64;
+      }
     }
 
     if (getCurrentSession()) {
@@ -123,7 +154,8 @@ export function registerRoutes(app, io) {
         envVariables: {
           ...envVariables,
           ORCHESTRATOR_WORKER_ID: worker.id
-        }
+        },
+        attachments: dataFiles
       });
     });
 

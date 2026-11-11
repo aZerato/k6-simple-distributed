@@ -121,9 +121,12 @@ the same origin as the API and Socket.io. It lets you:
   concatenation), with millisecond timestamps and `STDOUT`/`STDERR` type.
 * **Start a test** (k6 script **pasted** or **pointed to by a `.js` path**,
   **targeted workers** — per-worker checkboxes, default all, *All / None*,
-  total VUS, duration) and **stop** a test as an emergency stop, directly
-  from the interface. The path is read on the orchestrator's machine, then
-  injected as-is to the targeted workers.
+  total VUS, duration, optional **data files** (CSV, etc.)) and **stop** a
+  test as an emergency stop, directly from the interface. The path is read on
+  the orchestrator's machine, then injected as-is to the targeted workers;
+  the data files are uploaded to the workers' tmp dir, next to the script, so
+  relative paths in the script (e.g. `open('./data.csv')`) work as in a local
+  run.
 * **Download the session report**:
   * **`.html`** — a **self-contained** page: interactive SVG charts (with a tooltip showing
     the value at time t on hover) for the main series **and every metric**
@@ -170,7 +173,7 @@ k6 console logs keep arriving via `worker:log`.
 | GET    | `/api/test/report?format=html`| Self-contained HTML report (SVG charts + every metric)       |
 | GET    | `/api/test/report?session=`  | Report of a specific session (id `sess-…`)               |
 | GET    | `/api/raw-metrics`           | Raw k6 JSON output of a worker (`?session=&worker=`, JSON Lines) |
-| POST   | `/api/test/start`            | Start a distributed test (optional `workerIds`; 409 if a test is already running) |
+| POST   | `/api/test/start`            | Start a distributed test (optional `workerIds`, optional `attachments` data files; 409 if a test is already running) |
 | POST   | `/api/test/stop`             | Emergency stop of all tests                                  |
 
 > **Note:** only one test runs at a time. If a session is still in progress

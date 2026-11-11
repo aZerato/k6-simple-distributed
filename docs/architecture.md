@@ -36,8 +36,8 @@ The system is based on an agent model continuously connected to the orchestrator
 ## 2. Test Lifecycle (WebSocket Flow)
 
 1. **Connection & registration:** At startup, the Node.js worker connects to the orchestrator (Socket.io, auth `{ workerId }`) and announces itself with `worker:ready` (`{ status }`); the link is self-healing (infinite reconnection, 2 s delay).
-2. **Test order (`orchestrator:start_test`):** The orchestrator sends each **targeted worker** a JSON payload `{ scriptContent, vus, duration, envVariables }` — the total VUS are distributed **only across the targeted workers** (see §2.1).
-3. **Secure execution:** The worker writes the JS script into an ephemeral file, sanitizes the arguments, and launches k6 in isolation (`{ shell: false }`), then announces `worker:status_changed` (`BUSY`). A refusal (already busy, missing script) is answered with `worker:error`.
+2. **Test order (`orchestrator:start_test`):** The orchestrator sends each **targeted worker** a JSON payload `{ scriptContent, vus, duration, envVariables, attachments }` — the total VUS are distributed **only across the targeted workers** (see §2.1), and `attachments` carries the uploaded data files (see §2.2).
+3. **Secure execution:** The worker writes the JS script — and the uploaded data files, when any — into its tmp directory (next to each other, so relative paths in the script resolve like a local run), sanitizes the arguments, and launches k6 in isolation (`{ shell: false }`), then announces `worker:status_changed` (`BUSY`). A refusal (already busy, missing script, invalid data file) is answered with `worker:error`.
 4. **Real-time upload (`worker:log`):** Every `stdout`/`stderr` chunk produced by k6 is pushed over the WebSocket to the orchestrator for live display.
 5. **Raw metrics (`worker:metrics`):** In parallel, k6 writes its data points to an ephemeral file (`--out json=`), which the worker re-reads line by line and batches to the orchestrator (see §5).
 6. **Emergency stop (`orchestrator:stop_test`):** The orchestrator can interrupt the test at any time; the worker sends `SIGINT` to the k6 process.
@@ -57,6 +57,25 @@ request answers `422`. The response carries the selection back
 (`workersCibles` + `workerIds`). In the web console, each worker has a
 checkbox (default: all) with *All / None* shortcuts, and "Start" is
 disabled when none is selected.
+
+#### 2.2 Data files (CSV, etc.) — upload to the workers' tmp dir
+
+A script may reference local data files (e.g. `open('./data.csv')`, as in the
+`SharedArray` + PapaParse example). `POST /api/test/start` accepts an optional
+`attachments`: an object `name -> base64 content`, filled by the web console
+(file picker; the files are read as base64 in the browser and never touch the
+orchestrator's disk):
+
+* at most **20 files**, **10 MB total** (the JSON body cap is raised to 20 MB) —
+  beyond that the request answers `413`;
+* names are sanitized on both sides (no path separators, no `.` / `..`, no
+  empty name) — an invalid name answers `400`;
+* the orchestrator forwards the files in the `start_test` payload; each worker
+  writes them **next to the ephemeral script** (in the worker's tmp dir) and
+  deletes them at the end of the test.
+
+Relative paths in the script therefore behave exactly like a local `k6 run`:
+upload `data.csv` and keep `open('./data.csv')` unchanged.
 
 ---
 
