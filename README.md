@@ -15,6 +15,14 @@ You can run your tests via a web ui or via an API.
 
 ![HTML Report metrics](./docs/img/report-metrics.png)
 
+## Logic / objectives
+
+Read the [doc](./docs/architecture.md)
+
+## Setup
+
+Read the [guide](./docs/setup.md)
+
 ## Run Commands per OS
 
 To set the environment variables (`ORCHESTRATOR_URL`, `WORKER_ID`, `PORT`), the syntax varies with the operating system and the terminal used.
@@ -88,7 +96,7 @@ node \orchestrator\test\trigger.js
 
 ---
 
-## Orchestrator Web Console
+## Startup
 
 At startup, the orchestrator serves the web console on **`http://<IP_ORCHESTRATEUR>:3000`**.
 The console is a **React / Next.js** application (`web/` folder, split per
