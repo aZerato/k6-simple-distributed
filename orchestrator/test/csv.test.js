@@ -24,15 +24,17 @@ export default function () {
   const randomUser = csvData[Math.floor(Math.random() * csvData.length)];
   console.log('Random user: ', JSON.stringify(randomUser));
 
-  const params = {
-    login: randomUser.username,
-    password: randomUser.password,
-  };
-  console.log('Random user: ', JSON.stringify(params));
+  const credentials = `${randomUser.username}:${randomUser.password}`;
 
-  const res = http.post('https://test.k6.io/login.php', params);
+  console.log('Random user: ', JSON.stringify(credentials));
+
+  const url = `https://${credentials}@quickpizza.grafana.com/api/basic-auth/${randomUser.username}/${randomUser.password}`;
+  const res = http.get(url);
+// Verify response
   check(res, {
-    'login succeeded': (r) => r.status === 200 && r.body.indexOf('successfully authorized') !== -1,
+    'status is 200': (r) => r.status === 200,
+    'is authenticated': (r) => r.json().authenticated === true,
+    'is correct user': (r) => r.json().user === username,
   });
 
   sleep(1);

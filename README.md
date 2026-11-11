@@ -91,8 +91,12 @@ node \worker\worker.js
 Then, from the Orchestrator's browser, open **`http://localhost:3000`** (see section 5) —
 or, via the API, you can trigger the demo test located here:
 ```shell
-node \orchestrator\test\trigger.js
+node \orchestrator\test\trigger.api.js
 ```
+
+To smoke-test the whole orchestrator API (worker selection + start/stop), run
+the ready-to-run E2E fixtures: `node orchestrator/test/e2e/run.js` (see
+`orchestrator/test/e2e/README.md` for what each case covers).
 
 ---
 
