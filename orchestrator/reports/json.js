@@ -1,10 +1,10 @@
-// Rapport JSON (GET /api/test/report) :
-//   séries par seconde + statistiques finales (fusion et par worker) + logs.
+// JSON report (GET /api/test/report):
+//   per-second series + final statistics (fusion and per worker) + logs.
 import { aggStats } from '../metrics.js';
 import { stamp } from '../utils.js';
 import { sessionOverallStatus } from '../state.js';
 
-// Un peu de statistiques par métrique pour les séries (lignes du rapport / JSON)
+// A bit of per-metric statistics for the series (report / JSON lines)
 function slimStats(v) {
   return {
     count: v.count,

@@ -2,7 +2,7 @@
   "name": "k6-orchestrator-web",
   "version": "0.1.0",
   "private": true,
-  "description": "Console web de l'orchestrateur k6 distribué (React / Next.js, build statique servi par l'orchestrateur)",
+  "description": "Web console of the distributed k6 orchestrator (React / Next.js, static build served by the orchestrator)",
   "scripts": {
     "dev": "next dev -p 3001",
     "build": "next build",

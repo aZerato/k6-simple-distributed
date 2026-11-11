@@ -1,12 +1,12 @@
 'use client';
 /* ============================================================
-   useDashboard — le « cerveau » de la console
-   (port React de public/app.js : socket + état de la vue)
+   useDashboard — the "brain" of the console
+   (React port of public/app.js: socket + view state)
 
-   - connexion socket.io à l'orchestrateur (événements ui:*)
-   - état de la vue : session affichée / session « piquetée » / session RUNNING
-   - rows (snapshots ui:metrics), séries par worker, logs par worker
-   - garde-fou « refresh forcé » (watchdog 1/s)
+   - socket.io connection to the orchestrator (ui:* events)
+   - view state: displayed session / "pinned" session / RUNNING session
+   - rows (ui:metrics snapshots), series per worker, logs per worker
+   - "forced refresh" watchdog (1/s)
    ============================================================ */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { io } from 'socket.io-client';
@@ -28,35 +28,35 @@ import {
 } from '../lib/charts';
 
 export function useDashboard() {
-  /* ---------- refs (état mutable, closures stables) ---------- */
+  /* ---------- refs (mutable state, stable closures) ---------- */
 
   const socketRef = useRef(null);
-  const rowsRef = useRef([]); // snapshots (ui:metrics) de la session affichée
-  const workerIdsRef = useRef([]); // workers ayant produit des métriques (ordre d'apparition)
-  const seriesVisibleRef = useRef(new Map()); // id de série -> visible
-  const maxSeqRef = useRef(0); // dédoublonnage du rejeu
+  const rowsRef = useRef([]); // snapshots (ui:metrics) of the displayed session
+  const workerIdsRef = useRef([]); // workers that produced metrics (order of appearance)
+  const seriesVisibleRef = useRef(new Map()); // series id -> visible
+  const maxSeqRef = useRef(0); // deduplication of the replay
   const workerLogsRef = useRef(new Map()); // workerId -> [ { t, type, text } ]
-  const activeWorkerRef = useRef(null); // onglet de logs sélectionné
-  const lastAppendedRef = useRef(null); // dernière ligne ajoutée (animation)
-  const clearedAtRef = useRef(0); // bouton « Vider » (epoch ms)
-  const activeSessionIdRef = useRef(null); // session affichée (graphiques + logs)
-  const userPinnedIdRef = useRef(null); // session choisie dans le sélecteur « Rapport »
-  const runningSessionIdRef = useRef(null); // session RUNNING (d'après ui:session_state)
-  const lastRowAtRef = useRef(0); // horodatage du dernier snapshot reçu
-  const lastResyncAtRef = useRef(0); // dernier rejeu forcé (garde-fou anti-boucle)
-  const stickRef = useRef(true); // « collé » au bas des logs ?
-  const hoverRef = useRef(null); // { redraw, index } — graphique actuellement survolé
+  const activeWorkerRef = useRef(null); // selected logs tab
+  const lastAppendedRef = useRef(null); // last appended line (animation)
+  const clearedAtRef = useRef(0); // "Clear" button (epoch ms)
+  const activeSessionIdRef = useRef(null); // displayed session (charts + logs)
+  const userPinnedIdRef = useRef(null); // session chosen in the "Report" selector
+  const runningSessionIdRef = useRef(null); // RUNNING session (from ui:session_state)
+  const lastRowAtRef = useRef(0); // timestamp of the last snapshot received
+  const lastResyncAtRef = useRef(0); // last forced replay (anti-loop safeguard)
+  const stickRef = useRef(true); // "stuck" to the bottom of the logs?
+  const hoverRef = useRef(null); // { redraw, index } — chart currently hovered
   const logviewRef = useRef(null);
   const tipRef = useRef(null);
-  const canvasRefs = useRef({}); // clé -> élément canvas
+  const canvasRefs = useRef({}); // key -> canvas element
 
-  /* ---------- état React (rendu) ---------- */
+  /* ---------- React state (rendering) ---------- */
 
   const [ledOn, setLedOn] = useState(false);
   const [workers, setWorkers] = useState([]);
   const [sessions, setSessions] = useState([]);
   const [latestSession, setLatestSession] = useState(null);
-  const [rowsRev, setRowsRev] = useState(0); // tick : les rows ont changé
+  const [rowsRev, setRowsRev] = useState(0); // tick: the rows changed
   const [workerIds, setWorkerIds] = useState([]);
   const [metricNames, setMetricNames] = useState([]);
   const [metricName, setMetricName] = useState('');
@@ -64,7 +64,7 @@ export function useDashboard() {
   const [sessionSelectValue, setSessionSelectValue] = useState('');
   const [rawWorkerValue, setRawWorkerValue] = useState('');
   const [activeWorker, setActiveWorker] = useState(null);
-  const [logRev, setLogRev] = useState(0); // tick : les logs ont changé
+  const [logRev, setLogRev] = useState(0); // tick: the logs changed
   const [totalLogLines, setTotalLogLines] = useState(0);
   const [autoScroll, setAutoScroll] = useState(true);
   const [formStatus, setFormStatus] = useState({ cls: '', text: '' });
@@ -74,7 +74,7 @@ export function useDashboard() {
   useEffect(() => { metricNameRef.current = metricName; }, [metricName]);
   useEffect(() => { seriesVisibleRef.current = seriesVisible; }, [seriesVisible]);
 
-  /* ---------- helpers de logs ---------- */
+  /* ---------- Logs helpers ---------- */
 
   const nearBottom = () => {
     const el = logviewRef.current;
@@ -86,7 +86,7 @@ export function useDashboard() {
     if (el) el.scrollTop = el.scrollHeight;
   };
 
-  /* ---------- Réinitialisation complète de la vue (bascule de session) ---------- */
+  /* ---------- Full view reset (session switch) ---------- */
 
   const resetAll = useCallback(() => {
     rowsRef.current = [];
@@ -106,9 +106,9 @@ export function useDashboard() {
     setRowsRev((r) => r + 1);
   }, []);
 
-  /* ---------- Métriques : workers apparus + métriques connues ---------- */
+  /* ---------- Metrics: workers appeared + known metrics ---------- */
 
-  // Un worker émet-t-il des métriques pour la première fois ? (mise à jour des séries)
+  // Does a worker emit metrics for the first time? (series update)
   const noteWorkers = (row) => {
     let changed = false;
     for (const wid of Object.keys(row.byWorker || {})) {
@@ -121,14 +121,14 @@ export function useDashboard() {
     return changed;
   };
 
-  // Port de syncMetricSelect : conserve la sélection si encore valide, sinon la 1re.
+  // Port of syncMetricSelect: keeps the selection if still valid, otherwise the first one.
   const syncMetricNames = () => {
     const names = knownMetrics(rowsRef.current);
     setMetricNames(names);
     setMetricName((cur) => (names.includes(cur) ? cur : names[0] || ''));
   };
 
-  /* ---------- Sessions & rapports (port de fillSelect / refreshSessions) ---------- */
+  /* ---------- Sessions & reports (port of fillSelect / refreshSessions) ---------- */
 
   const setSessionsAndSelect = (list, forceId) => {
     const arr = list || [];
@@ -146,11 +146,11 @@ export function useDashboard() {
         return res.json();
       })
       .then((list) => setSessionsAndSelect(list))
-      .catch(() => { /* orchestrateur momentanément injoignable */ });
+      .catch(() => { /* orchestrator temporarily unreachable */ });
     if (forceId) setSessionSelectValue(forceId);
   };
 
-  /* ---------- État de session (port de applySessionState + setLatest) ---------- */
+  /* ---------- Session state (port of applySessionState + setLatest) ---------- */
 
   const applySessionState = (s) => {
     if (!s) return;
@@ -158,8 +158,8 @@ export function useDashboard() {
     if (s.status === 'RUNNING') runningSessionIdRef.current = s.id;
     else if (s.id === runningSessionIdRef.current) runningSessionIdRef.current = null;
     if (hijack) {
-      // Un nouveau test repart : la vue repasse dessus (même si l'utilisateur
-      // regardait une autre session).
+      // A new test is starting: the view switches back to it (even if the
+      // user was looking at another session).
       userPinnedIdRef.current = null;
       activeSessionIdRef.current = s.id;
       resetAll();
@@ -168,7 +168,7 @@ export function useDashboard() {
     refreshSessions(hijack ? s.id : undefined);
   };
 
-  /* ---------- Logs : ajout d'une ligne ---------- */
+  /* ---------- Logs: appending a line ---------- */
 
   const appendLogLine = (entry) => {
     const { workerId, t, type, text } = entry;
@@ -182,7 +182,7 @@ export function useDashboard() {
     setTotalLogLines((n) => n + 1);
     lastAppendedRef.current = { workerId, line: arr[arr.length - 1] };
 
-    // Première ligne d'un worker non encore suivi : on l'active automatiquement
+    // First line of a worker not yet followed: we activate it automatically
     if (!activeWorkerRef.current) {
       activeWorkerRef.current = workerId;
       setActiveWorker(workerId);
@@ -190,7 +190,7 @@ export function useDashboard() {
     setLogRev((r) => r + 1);
   };
 
-  /* ---------- Socket temps réel ---------- */
+  /* ---------- Real-time socket ---------- */
 
   useEffect(() => {
     const socket = io(ORCHESTRATOR_URL || undefined);
@@ -206,10 +206,10 @@ export function useDashboard() {
       setSessionsAndSelect(ss);
     });
 
-    // Rejeu des logs déjà produits (connexion en retard, ou session sélectionnée dans le bandeau « Rapport »)
+    // Replay of the logs already produced (late connection, or session selected in the "Report" strip)
     socket.on('ui:logs_replay', ({ session, workers }) => {
       if (session !== activeSessionIdRef.current) {
-        // Bascule de la vue vers la session demandée
+        // Switching the view to the requested session
         activeSessionIdRef.current = session;
         resetAll();
       }
@@ -233,12 +233,12 @@ export function useDashboard() {
 
     socket.on('ui:log', (l) => {
       if (l.session !== activeSessionIdRef.current) return;
-      if (l.seq && l.seq <= maxSeqRef.current) return; // déjà rejouée
+      if (l.seq && l.seq <= maxSeqRef.current) return; // already replayed
       if (l.seq) maxSeqRef.current = l.seq;
       appendLogLine(l);
     });
 
-    // Snapshots de métriques (rejeu à la demande puis 1/s pendant le test)
+    // Metrics snapshots (on-demand replay, then 1/s during the test)
     socket.on('ui:metrics_replay', ({ session, rows: replayRows }) => {
       if (session !== activeSessionIdRef.current) {
         activeSessionIdRef.current = session;
@@ -253,11 +253,11 @@ export function useDashboard() {
 
     socket.on('ui:metrics', ({ session, running, row }) => {
       if (session !== activeSessionIdRef.current) {
-        // Le snapshot ne correspond pas à la session affichée :
-        //  - si l'utilisateur a choisi une session dans le sélecteur « Rapport »,
-        //    on reste dessus (pas de rattrapage automatique) ;
-        //  - sinon c'est le flux live du test en cours : on (re)bascule dessus,
-        //    même si l'état de démarrage a été manqué (reconnexion, etc.).
+        // The snapshot does not match the displayed session:
+        //  - if the user chose a session in the "Report" selector,
+        //    we stay on it (no automatic catch-up);
+        //  - otherwise it is the live flow of the running test: we (re)switch
+        //    to it, even if the start state was missed (reconnection, etc.).
         if (running && userPinnedIdRef.current === null) {
           activeSessionIdRef.current = session;
           resetAll();
@@ -284,11 +284,11 @@ export function useDashboard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  /* ---------- Garde-fou « refresh forcé » (1/s) ----------
-     Pendant un test en cours, si le flux live ne parvient plus à la vue
-     (reconnexion ratée, état manqué, onglet endormi…), on redemande à
-     l'orchestrateur l'historique de la session en cours : les graphiques,
-     cartes et tableau redeviennent à jour automatiquement. */
+  /* ---------- "Forced refresh" watchdog (1/s) ----------
+     During a running test, if the live flow no longer reaches the view
+     (failed reconnection, missed state, sleeping tab…), we ask the
+     orchestrator for the history of the running session: the charts,
+     cards and table become up to date again automatically. */
   useEffect(() => {
     const t = setInterval(() => {
       if (!runningSessionIdRef.current || userPinnedIdRef.current !== null || activeSessionIdRef.current !== runningSessionIdRef.current) return;
@@ -302,13 +302,13 @@ export function useDashboard() {
     return () => clearInterval(t);
   }, []);
 
-  /* ---------- Init : historique des sessions ---------- */
+  /* ---------- Init: session history ---------- */
   useEffect(() => {
     refreshSessions();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  /* ---------- Dessin (port de drawCharts + updateCards) ---------- */
+  /* ---------- Drawing (port of drawCharts + updateCards) ---------- */
 
   const drawAll = useCallback(() => {
     const rows = rowsRef.current;
@@ -325,10 +325,10 @@ export function useDashboard() {
       if (!metricNameRef.current) prep(mel);
       else drawSeries(mel, metricDef(metricNameRef.current), { rows, workerIds: wids, visible });
     }
-    // Le curseur survole-t-il un graphique ? On garde le repère stable pendant les rafraîchissements live
+    // Is the cursor hovering a chart? We keep the marker stable during live refreshes
     if (hoverRef.current) hoverRef.current.redraw(hoverRef.current.index);
 
-    // Cartes de synthèse : sparklines
+    // Summary cards: sparklines
     const vals = rows.slice(-SPARK_LEN);
     for (const c of CARDS) {
       const el = canvases['card-' + c.label];
@@ -337,7 +337,7 @@ export function useDashboard() {
     }
   }, []);
 
-  /* ---------- Survol des graphiques (valeur à l'instant t) ---------- */
+  /* ---------- Chart hovering (value at time t) ---------- */
 
   useEffect(() => {
     const tipEl = tipRef.current;
@@ -357,7 +357,7 @@ export function useDashboard() {
         hoverRef.current = i >= 0 ? { redraw, index: i } : null;
         if (i < 0) { hideChartTip(tipEl); return; }
         const r = rowsRef.current[i];
-        // Valeur de TOUTES les séries affichées à l'instant t (fusion + workers)
+        // Value of ALL visible series at time t (merged + workers)
         const html = `<span class="tt">${timeLabel(r.t)}</span>` +
           getSeries().filter((s) => isSeriesOn(seriesVisibleRef.current, s.id)).map((s) => `<br>${s.label} : ${s.fmt(s.get(r))}`).join('');
         showChartTip(tipEl, e, html);
@@ -372,14 +372,14 @@ export function useDashboard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  /* ---------- Contrôles : formulaire, arrêt, vider, downloads ---------- */
+  /* ---------- Controls: form, stop, clear, downloads ---------- */
 
   const submitTest = async ({ scriptPath, scriptContent, totalVus, duration }) => {
     setSubmitting(true);
-    setFormStatus({ cls: '', text: 'Envoi…' });
-    // Le script est soit collé, soit pointé par un fichier .js (lu par l'orchestrateur)
+    setFormStatus({ cls: '', text: 'Sending…' });
+    // The script is either pasted or pointed to by a .js file (read by the orchestrator)
     if (!scriptPath && !scriptContent) {
-      setFormStatus({ cls: 'err', text: 'Aucun script : collez du code k6 ou indiquez un fichier .js.' });
+      setFormStatus({ cls: 'err', text: 'No script: paste k6 code or point to a .js file.' });
       setSubmitting(false);
       return;
     }
@@ -394,23 +394,23 @@ export function useDashboard() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
-      // La vue bascule immédiatement sur la nouvelle session, sans attendre l'état socket
+      // The view immediately switches to the new session, without waiting for the socket state
       userPinnedIdRef.current = null;
       activeSessionIdRef.current = data.sessionId;
       resetAll();
-      // Refresh forcé : l'orchestrateur rejoue l'historique de la session → les
-      // graphiques, cartes et tableau sont garantis à jour dès la relance.
+      // Forced refresh: the orchestrator replays the session history -> the
+      // charts, cards and table are guaranteed up to date from the restart.
       socketRef.current && socketRef.current.emit('ui:show_session', { session: data.sessionId });
       refreshSessions(data.sessionId);
       setFormStatus({
         cls: 'ok',
-        text: `${scriptPath ? `Fichier : ${scriptPath} — ` : ''}Test lancé — ${data.workersCibles} worker(s) ciblé(s), session ${data.sessionId}.`
+        text: `${scriptPath ? `File: ${scriptPath} — ` : ''}Test started — ${data.workersCibles} worker(s) targeted, session ${data.sessionId}.`
       });
     } catch (err) {
       setFormStatus({ cls: 'err', text: err.message });
     } finally {
       setSubmitting(false);
-    }
+    };
   };
 
   const stopTest = async () => {
@@ -419,13 +419,13 @@ export function useDashboard() {
       const data = await res.json();
       setFormStatus({ cls: 'ok', text: data.message });
     } catch {
-      setFormStatus({ cls: 'err', text: "Impossible d'envoyer l'ordre d'arrêt." });
+      setFormStatus({ cls: 'err', text: 'Could not send the stop order.' });
     }
   };
 
   const clearLogs = () => {
-    // « Vider » : purge la vue seulement (la mémoire par worker est conservée,
-    // comme dans la console legacy).
+    // "Clear": purges the view only (the per-worker memory is kept,
+    // as in the legacy console).
     clearedAtRef.current = Date.now();
     setLogRev((r) => r + 1);
   };
@@ -445,7 +445,7 @@ export function useDashboard() {
     triggerDownload(`${API_BASE}/api/test/report?session=${encodeURIComponent(id)}&format=${fmt}`);
   };
 
-  // JSON brut k6 d'un worker (contenu du `--out json=`, une ligne JSON par point)
+  // Raw k6 JSON of a worker (content of `--out json=`, one JSON line per data point)
   const downloadRaw = () => {
     const sid = sessionSelectValue;
     const wid = rawWorkerValue;
@@ -453,21 +453,21 @@ export function useDashboard() {
     triggerDownload(`${API_BASE}/api/raw-metrics?session=${encodeURIComponent(sid)}&worker=${encodeURIComponent(wid)}`);
   };
 
-  /* ---------- API exposée aux composants ---------- */
+  /* ---------- API exposed to the components ---------- */
 
   return {
-    // Barre du haut
+    // Top bar
     ledOn,
     workers,
 
-    // Snapshots + dessin
+    // Snapshots + drawing
     rowsRef,
     drawAll,
     canvasRefs,
     tipRef,
     logviewRef,
 
-    // Séries / métrique
+    // Series / metric
     workerIds,
     seriesVisible,
     setSeriesOn: (id, on) => {
@@ -496,7 +496,7 @@ export function useDashboard() {
     clearedAtRef,
     onLogScroll: () => { stickRef.current = nearBottom(); },
 
-    // Sessions & rapports
+    // Sessions & reports
     sessions,
     sessionSelectValue,
     rawWorkerValue,
@@ -510,7 +510,7 @@ export function useDashboard() {
     downloadReport,
     downloadRaw,
 
-    // Formulaire
+    // Form
     formStatus,
     submitting,
     submitTest,

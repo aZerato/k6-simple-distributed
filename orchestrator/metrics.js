@@ -1,13 +1,13 @@
-// Agrégation des métriques k6 (flux `worker:metrics`).
+// Aggregation of k6 metrics (`worker:metrics` stream).
 //
-// Deux niveaux d'agrégat par session :
-//   - `s.metrics`         : fusion de tous les workers (courbes principales) ;
-//   - `s.metricsByWorker` : un agrégat par worker (courbes par agent).
-// Un snapshot par seconde (`buildRow`) est diffusé vers la console (ui:metrics).
+// Two aggregation levels per session:
+//   - `s.metrics`         : fusion of every worker (main curves);
+//   - `s.metricsByWorker` : one aggregate per worker (curves per agent).
+// A per-second snapshot (`buildRow`) is broadcast to the console (ui:metrics).
 import { RING_CAPACITY, MAX_HISTORY_ROWS, MAX_RAW_LINES_PER_WORKER } from './constants.js';
 import { getCurrentSession } from './state.js';
 
-// Fenêtre circulaire : permet de recalculer les percentiles sur les dernières valeurs.
+// Circular window: allows recomputing percentiles over the latest values.
 class MetricAgg {
   constructor() {
     this.count = 0;
@@ -15,8 +15,8 @@ class MetricAgg {
     this.min = Infinity;
     this.max = -Infinity;
     this.last = null;
-    this.rateSum = 0;   // accumulé depuis le dernier tick (seconde)
-    this.rate = 0;      // valeur du dernier tick
+    this.rateSum = 0;   // accumulated since the last tick (second)
+    this.rate = 0;      // value of the last tick
     this.ring = new Float64Array(RING_CAPACITY);
     this.ringLen = 0;
     this.ringIdx = 0;
@@ -35,7 +35,7 @@ class MetricAgg {
     if (this.ringLen < RING_CAPACITY) this.ringLen++;
   }
 
-  // Copie des valeurs de la fenêtre, dans l'ordre chronologique
+  // Copy of the window values, in chronological order
   ringValues() {
     const out = new Array(this.ringLen);
     if (this.ringLen >= RING_CAPACITY) {
@@ -76,7 +76,7 @@ export function aggStats(agg) {
   };
 }
 
-// Ingestion d'un lot de points de données k6 (envoyés par le worker)
+// Ingestion of a batch of k6 data points (sent by the worker)
 export function ingestMetrics(workerId, items) {
   const s = getCurrentSession();
   if (!s || s.status !== 'RUNNING') return;
@@ -87,25 +87,25 @@ export function ingestMetrics(workerId, items) {
   }
   for (const item of items) {
     if (!item || typeof item.metric !== 'string' || !item.data) continue;
-    // JSON brut k6, ligne par ligne (re-téléchargeable via /api/raw-metrics)
+    // Raw k6 JSON, line by line (re-downloadable via /api/raw-metrics)
     if (raw.length < MAX_RAW_LINES_PER_WORKER) {
       raw.push(JSON.stringify({ metric: item.metric, data: item.data }));
     } else if (!s.rawTruncated) {
       s.rawTruncated = true;
-      console.warn(`[Orchestrateur] Buffer JSON brut saturé pour ${workerId} (plafond ${MAX_RAW_LINES_PER_WORKER} lignes).`);
+      console.warn(`[Orchestrator] Raw JSON buffer saturated for ${workerId} (cap ${MAX_RAW_LINES_PER_WORKER} lines).`);
     }
-    // Les lignes de métadonnées k6 (sans `value`) alimentent le brut, pas l'agrégation
+    // k6 metadata lines (no `value`) feed the raw buffer, not the aggregation
     if (typeof item.data.value !== 'number') continue;
     const count = Math.max(1, item.data.count || 1);
     const value = Number(item.data.value) || 0;
-    // Agrégat global (fusion de tous les workers)
+    // Global aggregate (fusion of every worker)
     let agg = s.metrics.get(item.metric);
     if (!agg) {
       agg = new MetricAgg();
       s.metrics.set(item.metric, agg);
     }
     agg.ingest(value, count);
-    // Agrégat par worker : alimente les courbes par agent de la console et du rapport
+    // Per-worker aggregate: feeds the per-agent curves of the console and the report
     let byW = s.metricsByWorker.get(workerId);
     if (!byW) {
       byW = new Map();
@@ -120,7 +120,7 @@ export function ingestMetrics(workerId, items) {
   }
 }
 
-// Construit le snapshot par seconde diffusé vers la console (ui:metrics)
+// Builds the per-second snapshot broadcast to the console (ui:metrics)
 function buildRow(s) {
   const vus = s.metrics.get('vus');
   const checks = s.metrics.get('checks');
@@ -130,7 +130,7 @@ function buildRow(s) {
   const sent = s.metrics.get('data_sent');
   const iter = s.metrics.get('iterations');
 
-  // Taux sur la dernière seconde (agrégats globaux ET par worker)
+  // Rates over the last second (global AND per-worker aggregates)
   for (const agg of s.metrics.values()) {
     agg.rate = agg.rateSum;
     agg.rateSum = 0;
@@ -142,8 +142,8 @@ function buildRow(s) {
     }
   }
 
-  // VUS fusionnés : somme des VUS actifs de chaque worker (le « last » global
-  // tout seul ne reflétait que le dernier worker qui a émis).
+  // Fused VUS: sum of every worker's active VUS (the global "last" alone
+  // only reflected the last worker that emitted).
   let vusTotal = 0;
   for (const mm of s.metricsByWorker.values()) {
     const va = mm.get('vus');
@@ -173,13 +173,13 @@ function buildRow(s) {
     row.metrics[name] = st;
   }
 
-  // Statistiques par worker (courbes par agent dans la console et le rapport)
+  // Per-worker statistics (per-agent curves in the console and the report)
   row.byWorker = {};
   for (const [wid, mm] of s.metricsByWorker) {
     const per = {};
     for (const [name, agg] of mm) {
       const st = aggStats(agg);
-      st.last = agg.last; // valeur instantanée du gauge (ex: VUS actifs du worker)
+      st.last = agg.last; // instant gauge value (e.g. the worker's active VUS)
       per[name] = st;
     }
     row.byWorker[wid] = per;
@@ -192,13 +192,13 @@ function buildRow(s) {
   return row;
 }
 
-// Un snapshot par seconde tant qu'une session est en cours
+// One snapshot per second as long as a session is running
 export function startMetricsTicker(io) {
   setInterval(() => {
     const s = getCurrentSession();
     if (!s || s.status !== 'RUNNING') return;
     const row = buildRow(s);
-    // `running: true` = flux live du test en cours (la console s'y rattache d'office)
+    // `running: true` = live stream of the running test (the console re-attaches to it automatically)
     io.to('dashboard').emit('ui:metrics', { session: s.id, running: true, row });
   }, 1000);
 }

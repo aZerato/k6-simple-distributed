@@ -1,21 +1,21 @@
 import { CHART_DEFS, buildSeries, isSeriesOn } from '../lib/charts';
 
 /*
- * Les 4 graphiques principaux (HTTP req/s, Données, VUS, Checks).
- * Chaque panneau : canvas + cases à cocher (Fusion + courbe par worker).
- * Le dessin lui-même est déclenché par la page (dash.drawAll).
+ * The 4 main charts (HTTP req/s, Data, VUS, Checks).
+ * Each panel: canvas + checkboxes (merged + one curve per worker).
+ * The drawing itself is triggered by the page (dash.drawAll).
  */
 
 const PANEL_TITLES = {
   http: { title: 'HTTP req/s', legend: <><i className="sw sw-accent" />req/s <i className="sw sw-red" />failed/s</> },
-  data: { title: 'Données (B/s)', legend: <><i className="sw sw-blue" />reçues <i className="sw sw-amber" />envoyées</> },
-  vus: { title: 'VUS', legend: <><i className="sw sw-accent" />actifs</> },
-  checks: { title: 'Checks passés', legend: <><i className="sw sw-accent" />%</> }
+  data: { title: 'Data (B/s)', legend: <><i className="sw sw-blue" />received <i className="sw sw-amber" />sent</> },
+  vus: { title: 'VUS', legend: <><i className="sw sw-accent" />active</> },
+  checks: { title: 'Checks passed', legend: <><i className="sw sw-accent" />%</> }
 };
 
 function SeriesToggles({ def, workerIds, seriesVisible, onToggle }) {
   return (
-    <div className="series-toggle" aria-label="Séries affichées">
+    <div className="series-toggle" aria-label="Visible series">
       {buildSeries(def, workerIds).map((s) => (
         <label className="sr" key={s.id}>
           <input

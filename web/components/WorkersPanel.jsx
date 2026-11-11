@@ -3,7 +3,7 @@ export default function WorkersPanel({ workers }) {
     <section className="panel reveal d1">
       <h2 className="panel-title">Workers</h2>
       <ul className="workers">
-        {!workers.length && <li className="empty">Aucun worker connecté…</li>}
+        {!workers.length && <li className="empty">No worker connected…</li>}
         {workers.map((w) => {
           const busy = w.status === 'BUSY';
           return (
@@ -11,7 +11,7 @@ export default function WorkersPanel({ workers }) {
               <span className="wname">{w.id}</span>
               <span className={'badge ' + (busy ? 'busy' : 'ok')}>
                 <i className="dot" />
-                {busy ? 'Occupé' : 'Disponible'}
+                {busy ? 'Busy' : 'Available'}
               </span>
             </li>
           );

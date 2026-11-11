@@ -1,8 +1,8 @@
 import { useEffect } from 'react';
 
 /*
- * Bandeau « Rapport » : session à exporter, JSON brut par worker,
- * téléchargements .html / .json / .txt / .jsonl.
+ * "Report" strip: session to export, raw JSON per worker,
+ * .html / .json / .txt / .jsonl downloads.
  */
 export default function ReportStrip({
   sessions,
@@ -18,9 +18,9 @@ export default function ReportStrip({
   const rawIds = (selected && selected.workerIds) || [];
   const has = !!sessionSelectValue;
 
-  // À chaque mise à jour de la liste des sessions (ou de la sélection),
-  // le sélecteur du JSON brut repart sur le 1er worker de la session
-  // (comportement de la console legacy).
+  // On every update of the session list (or of the selection),
+  // the raw JSON selector resets to the first worker of the session
+  // (behavior of the legacy console).
   useEffect(() => {
     setRawWorkerValue(rawIds[0] || '');
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -28,35 +28,35 @@ export default function ReportStrip({
 
   const reportMeta = latestSession
     ? `${latestSession.overall} · ${latestSession.totalVus} VUs · ${latestSession.workers.length} worker(s) · ${latestSession.duration}`
-    : 'Aucune session';
+    : 'No session';
 
   return (
     <div className="report-strip panel reveal">
-      <span className="panel-title inline">Rapport</span>
+      <span className="panel-title inline">Report</span>
       <select
         id="session-select"
         className="select"
-        aria-label="Session à exporter"
+        aria-label="Session to export"
         value={sessionSelectValue}
         onChange={(e) => onSessionSelect(e.target.value)}
       >
-        {!sessions.length && <option value="">Aucune session</option>}
+        {!sessions.length && <option value="">No session</option>}
         {sessions.map((s) => (
           <option value={s.id} key={s.id}>
-            {`${s.id} — ${s.overall} · ${s.totalVus} VUs · ${s.workerCount}w · ${new Date(s.createdAt).toLocaleString('fr-FR')}`}
+            {`${s.id} — ${s.overall} · ${s.totalVus} VUs · ${s.workerCount}w · ${new Date(s.createdAt).toLocaleString('en-US')}`}
           </option>
         ))}
       </select>
       <select
         id="raw-worker-select"
         className="select"
-        aria-label="Worker du JSON brut"
+        aria-label="Worker of the raw JSON"
         disabled={!has}
         value={rawWorkerValue}
         onChange={(e) => setRawWorkerValue(e.target.value)}
       >
         {rawIds.length === 0 ? (
-          <option value="">(aucun worker ciblé)</option>
+          <option value="">(no worker targeted)</option>
         ) : (
           rawIds.map((w) => (
             <option value={w} key={w}>{w}</option>
@@ -65,22 +65,22 @@ export default function ReportStrip({
       </select>
       <span className="report-meta" id="report-meta">{reportMeta}</span>
       <button className="btn btn-primary" id="btn-report-html" disabled={!has} onClick={() => downloadReport('html')}>
-        ⬇ Rapport (.html)
+        ⬇ Report (.html)
       </button>
       <button className="btn btn-ghost" id="btn-report-json" disabled={!has} onClick={() => downloadReport('json')}>
-        ⬇ Rapport (.json)
+        ⬇ Report (.json)
       </button>
       <button className="btn btn-ghost" id="btn-report-txt" disabled={!has} onClick={() => downloadReport('txt')}>
-        Résumé (.txt)
+        Summary (.txt)
       </button>
       <button
         className="btn btn-ghost"
         id="btn-report-raw"
         disabled={!has || !rawWorkerValue}
-        title="Sortie JSON brute de k6 (fichier --out json=, une ligne par point de données)"
+        title="Raw k6 JSON output (--out json= file, one line per data point)"
         onClick={downloadRaw}
       >
-        ⬇ JSON brut k6 (.jsonl)
+        ⬇ Raw k6 JSON (.jsonl)
       </button>
     </div>
   );

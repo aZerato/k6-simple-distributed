@@ -1,8 +1,8 @@
-// Plafonds mémoire / console — source unique pour tout l'orchestrateur.
+// Memory / console caps — single source of truth for the whole orchestrator.
 
-// --- LIMITES MÉMOIRE / CONSOLE ---
-export const MAX_SESSIONS = 10;                 // sessions conservées (plus récentes d'abord)
-export const MAX_LOG_LINES_PER_WORKER = 5000;  // lignes de logs conservées par worker / session
-export const RING_CAPACITY = 5000;              // valeurs récentes conservées par métrique (percentiles)
-export const MAX_HISTORY_ROWS = 1800;           // snapshots par seconde conservés par session
-export const MAX_RAW_LINES_PER_WORKER = 200000; // lignes du JSON brut k6 conservées par worker
+// --- MEMORY / CONSOLE LIMITS ---
+export const MAX_SESSIONS = 10;                 // sessions kept (newest first)
+export const MAX_LOG_LINES_PER_WORKER = 5000;  // log lines kept per worker / session
+export const RING_CAPACITY = 5000;              // recent values kept per metric (percentiles)
+export const MAX_HISTORY_ROWS = 1800;           // per-second snapshots kept per session
+export const MAX_RAW_LINES_PER_WORKER = 200000; // raw k6 JSON lines kept per worker

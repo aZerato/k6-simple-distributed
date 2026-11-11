@@ -1,8 +1,8 @@
-// Canal Socket.io : connexions des workers (agents) et de la console web.
+// Socket.io channel: connections of the workers (agents) and of the web console.
 //
-// Deux profils de socket, distingués par l'`auth.workerId` du handshake :
-//   - pas de workerId → une console web (état initial + rejeux) ;
-//   - workerId       → un worker (ready, logs, métriques, fin de test).
+// Two socket profiles, distinguished by the `auth.workerId` of the handshake:
+//   - no workerId -> a web console (initial state + replays);
+//   - workerId    -> a worker (ready, logs, metrics, end of test).
 import {
   workersRegistry,
   sessions,
@@ -19,23 +19,23 @@ export function registerSockets(io) {
   io.on('connection', (socket) => {
     const workerId = socket.handshake.auth && socket.handshake.auth.workerId;
 
-    // --- Cas 1 : une console web s'est connectée (pas de workerId dans l'auth) ---
+    // --- Case 1: a web console has connected (no workerId in the auth) ---
     if (!workerId) {
-      console.log(`[Orchestrateur] Console web connectée (Socket: ${socket.id})`);
+      console.log(`[Orchestrator] Web console connected (Socket: ${socket.id})`);
       handleDashboardSocket(socket);
       return;
     }
 
-    // --- Cas 2 : un worker (agent) s'enregistre ---
+    // --- Case 2: a worker (agent) registers ---
     handleWorkerSocket(io, socket, workerId);
   });
 }
 
-// --- CONSOLE WEB : état initial, rejeu live, rejeu d'une session à la demande ---
+// --- WEB CONSOLE: initial state, live replay, on-demand session replay ---
 function handleDashboardSocket(socket) {
   socket.join('dashboard');
 
-  // État initial : workers, session en cours (si existante) et historique
+  // Initial state: workers, current session (if any) and history
   socket.emit('ui:state', {
     workers: workersList(),
     session: getCurrentSession() ? sessionState(getCurrentSession()) : null,
@@ -43,7 +43,7 @@ function handleDashboardSocket(socket) {
     sessions: sessionsSummary()
   });
 
-  // Rejeu pour une UI qui se connecte en plein test
+  // Replay for a UI that connects mid-test
   const current = getCurrentSession();
   if (current && current.status === 'RUNNING') {
     const workers = {};
@@ -52,8 +52,8 @@ function handleDashboardSocket(socket) {
     socket.emit('ui:metrics_replay', { session: current.id, rows: current.history.slice(-300) });
   }
 
-  // Rejeu à la demande : l'utilisateur a sélectionné une session dans le bandeau « Rapport »
-  // → on rejoue l'historique complet (snapshots par seconde + logs par worker) de cette session.
+  // On-demand replay: the user selected a session in the "Report" strip
+  // -> we replay the full history (per-second snapshots + per-worker logs) of that session.
   socket.on('ui:show_session', ({ session }) => {
     const s = sessions.find((x) => x.id === session);
     if (!s) return;
@@ -65,9 +65,9 @@ function handleDashboardSocket(socket) {
   });
 }
 
-// --- WORKER (AGENT) : enregistrement + événements du test ---
+// --- WORKER (AGENT): registration + test events ---
 function handleWorkerSocket(io, socket, workerId) {
-  console.log(`[Orchestrateur] Worker connecté : ${workerId} (Socket: ${socket.id})`);
+  console.log(`[Orchestrator] Worker connected: ${workerId} (Socket: ${socket.id})`);
 
   workersRegistry.set(workerId, {
     id: workerId,
@@ -80,7 +80,7 @@ function handleWorkerSocket(io, socket, workerId) {
     const worker = workersRegistry.get(workerId);
     if (worker) {
       worker.status = data.status || 'AVAILABLE';
-      console.log(`[Orchestrateur] Worker ${workerId} synchronisé. Statut actuel : ${worker.status}`);
+      console.log(`[Orchestrator] Worker ${workerId} synchronized. Current status: ${worker.status}`);
       broadcastWorkers(io);
     }
   });
@@ -89,12 +89,12 @@ function handleWorkerSocket(io, socket, workerId) {
     const worker = workersRegistry.get(workerId);
     if (worker) {
       worker.status = data.status;
-      console.log(`[Orchestrateur] Changement de statut pour ${workerId} -> ${data.status}`);
+      console.log(`[Orchestrator] Status change for ${workerId} -> ${data.status}`);
       broadcastWorkers(io);
     }
   });
 
-  // Logs de console k6 (stdout / stderr) — stockés par worker, diffusés vers la console
+  // k6 console logs (stdout / stderr) — stored per worker, broadcast to the console
   socket.on('worker:log', (data) => {
     const type = data.type === 'stderr' ? 'stderr' : 'stdout';
     const text = data.output || '';
@@ -102,25 +102,25 @@ function handleWorkerSocket(io, socket, workerId) {
     ingestLog(io, workerId, type, text);
   });
 
-  // Points de données k6 (format JSON de `--out json=`) — agrégés pour les graphiques
+  // k6 data points (JSON format of `--out json=`) — aggregated for the charts
   socket.on('worker:metrics', (data) => {
     if (data && Array.isArray(data.data)) ingestMetrics(workerId, data.data);
   });
 
   socket.on('worker:test_finished', (data) => {
-    console.log(`[Orchestrateur] Le worker ${workerId} a complété son test (Code de sortie k6 : ${data.exitCode})`);
+    console.log(`[Orchestrator] Worker ${workerId} completed its test (k6 exit code: ${data.exitCode})`);
     markWorkerFinished(io, workerId, { exitCode: data.exitCode });
   });
 
   socket.on('worker:error', (data) => {
-    console.error(`[Orchestrateur][ERREUR] Signalement de ${workerId} :`, data.message);
+    console.error(`[Orchestrator][ERROR] Report from ${workerId}:`, data.message);
   });
 
   socket.on('disconnect', () => {
-    console.log(`[Orchestrateur] Worker déconnecté : ${workerId}`);
+    console.log(`[Orchestrator] Worker disconnected: ${workerId}`);
     workersRegistry.delete(workerId);
     broadcastWorkers(io);
-    // Si le worker portait une part de la session en cours, on clôt son entrée
-    markWorkerFinished(io, workerId, { error: 'Worker déconnecté' });
+    // If the worker held a share of the current session, close its entry
+    markWorkerFinished(io, workerId, { error: 'Worker disconnected' });
   });
 }

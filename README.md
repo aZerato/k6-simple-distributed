@@ -1,28 +1,28 @@
-# Guide de Configuration et d'Exécution Multi-OS
+# Multi-OS Setup and Run Guide
 
-Ce guide explique comment installer, configurer et exécuter l'**Orchestrateur** et les **Workers (Agents)** k6 sur **Windows**, **Linux** et **macOS**.
+This guide explains how to install, configure, and run the k6 **Orchestrator** and **Workers (Agents)** on **Windows**, **Linux** and **macOS**.
 
 ---
 
-## 1. Prérequis Globaux (Sur toutes les machines)
+## 1. Global Prerequisites (on every machine)
 
 ### 1.1 Node.js
-Le projet nécessite **Node.js (version 18 ou supérieure)**.
-* **Windows & macOS :** Téléchargez l'installeur officiel sur [nodejs.org](https://nodejs.org/).
-* **Linux (Ubuntu/Debian) :** 
+The project requires **Node.js (version 18 or higher)**.
+* **Windows & macOS:** Download the official installer from [nodejs.org](https://nodejs.org/).
+* **Linux (Ubuntu/Debian):**
   ```bash
   sudo apt update && sudo apt install -y nodejs npm
   ```
 
-### 1.2 Grafana k6 (Requis uniquement sur les machines Workers)
-Le binaire `k6` doit être accessible dans le PATH du système.
+### 1.2 Grafana k6 (required on Worker machines only)
+The `k6` binary must be available on the system PATH.
 
-* **Windows :**
-  * Via [Scoop](https://scoop.sh/) : `scoop install k6`
-  * Via [Winget](https://learn.microsoft.com/en-us/windows/package-manager/winget/) : `winget install Grafana.k6`
-  * Ou téléchargez l'installeur `.msi` depuis le [GitHub officiel de k6](https://github.com/grafana/k6/releases).
+* **Windows:**
+  * Via [Scoop](https://scoop.sh/): `scoop install k6`
+  * Via [Winget](https://learn.microsoft.com/en-us/windows/package-manager/winget/): `winget install Grafana.k6`
+  * Or download the `.msi` installer from the [official k6 GitHub](https://github.com/grafana/k6/releases).
 
-* **Linux (Ubuntu/Debian) :**
+* **Linux (Ubuntu/Debian):**
   ```bash
   sudo gpg -k
   sudo gpg --no-default-keyring --keyring /usr/share/keyrings/k6-archive-keyring.gpg --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys C5AD17C747E3415A3642D57D77C6C491D6AC1D69
@@ -31,48 +31,48 @@ Le binaire `k6` doit être accessible dans le PATH du système.
   sudo apt install k6
   ```
 
-* **macOS :**
+* **macOS:**
   ```bash
   brew install k6
   ```
 
 ---
 
-## 2. Installation du Projet
+## 2. Project Installation
 
-Exécutez ces étapes sur l'ordinateur de l'Orchestrateur **et** sur chaque machine Worker.
+Run these steps on the Orchestrator's computer **and** on every Worker machine.
 
-1. Créez un dossier pour le projet et placez-y les dossiers correspondants selon la machine cible (`orchestrator` ou `worker`).
-2. Installez les dépendances :
+1. Create a folder for the project and place the corresponding folders inside it, depending on the target machine (`orchestrator` or `worker`).
+2. Install the dependencies:
    ```bash
    npm install
    ```
-3. Pour l'orchestrateur, générez la console web (React / Next.js, dossier `web/`) :
+3. For the orchestrator, build the web console (React / Next.js, `web/` folder):
    ```bash
    cd web
    npm install
    npm run build
    ```
-   L'orchestrateur sert le build (`web/out`) ; s'il est absent, un avertissement
-   s'affiche au démarrage (la console serait vide).
+   The orchestrator serves the build (`web/out`); if it is missing, a warning
+   is printed at startup (the console would be empty).
 
 ---
 
-## 3. Commandes d'Exécution par OS
+## 3. Run Commands per OS
 
-Pour configurer les variables d'environnement (`ORCHESTRATOR_URL`, `WORKER_ID`, `PORT`), la syntaxe varie selon le système d'exploitation et le terminal utilisé.
+To set the environment variables (`ORCHESTRATOR_URL`, `WORKER_ID`, `PORT`), the syntax varies with the operating system and the terminal used.
 
-### 3.1 Éxécution sur Windows
+### 3.1 Running on Windows
 
-#### Option A : Via PowerShell (Recommandé sur Windows)
-Dans PowerShell, les variables d'environnement doivent être définies sur des lignes distinctes avant de lancer le script :
+#### Option A: via PowerShell (recommended on Windows)
+In PowerShell, the environment variables must be defined on separate lines before running the script:
 
-* **Pour l'Orchestrateur :**
+* **For the Orchestrator:**
   ```powershell
   $env:PORT="3000"
   node orchestrator.js
   ```
-* **Pour un Worker (Agent) :**
+* **For a Worker (Agent):**
   ```powershell
   $env:ORCHESTRATOR_URL="http://<IP_ORCHESTRATEUR>:3000"
   $env:WORKER_ID="worker-windows-01"
@@ -80,13 +80,13 @@ Dans PowerShell, les variables d'environnement doivent être définies sur des l
   node worker.js
   ```
 
-#### Option B : Via l'Invite de commandes classique (cmd.exe)
+#### Option B: via the classic Command Prompt (cmd.exe)
 ```cmd
-:: Pour l'Orchestrateur
+:: For the Orchestrator
 set PORT=3000
 node orchestrator.js
 
-:: Pour un Worker (Agent)
+:: For a Worker (Agent)
 set ORCHESTRATOR_URL=http://<IP_ORCHESTRATEUR>:3000
 set WORKER_ID=worker-windows-01
 set PORT=4000
@@ -95,166 +95,166 @@ node worker.js
 
 ---
 
-### 3.2 Éxécution sur Linux et macOS
+### 3.2 Running on Linux and macOS
 
-Sur les systèmes de type Unix (Bash / Zsh), vous pouvez déclarer les variables d'environnement directement sur la même ligne, juste avant la commande Node.
+On Unix-like systems (Bash / Zsh) you can declare the environment variables on the same line, just before the Node command.
 
-* **Pour l'Orchestrateur :**
+* **For the Orchestrator:**
   ```bash
   PORT=3000 node orchestrator.js
   ```
 
-* **Pour un Worker (Agent) :**
+* **For a Worker (Agent):**
   ```bash
   ORCHESTRATOR_URL="http://<IP_ORCHESTRATEUR>:3000" WORKER_ID="worker-linux-01" PORT=4000 node worker.js
   ```
 
 ---
 
-### 4. Test d'éxécution
+### 4. Test run
 
-* **Pour l'Orchestrateur :**
+* **For the Orchestrator:**
 ```shell
 node \orchestrator\orchestrator.js
 ```
 
-* **Pour un Worker (Agent) :**
+* **For a Worker (Agent):**
 ```shell
 node \worker\worker.js
 ```
 
-Puis, depuis le navigateur de l'Orchestrateur, ouvrir **`http://localhost:3000`** (voir section 5) —
-ou, via API vous pouvez déclencher le test de démonstration se trouvant ici :
+Then, from the Orchestrator's browser, open **`http://localhost:3000`** (see section 5) —
+or, via the API, you can trigger the demo test located here:
 ```shell
 node \orchestrator\test\trigger.js
 ```
 
 ---
 
-## 5. Console web de l'Orchestrateur
+## 5. Orchestrator Web Console
 
-Dès le démarrage, l'orchestrateur sert la console web sur **`http://<IP_ORCHESTRATEUR>:3000`**.
-La console est une application **React / Next.js** (dossier `web/`, découpage par
-composants — voir §6.1) : le build statique (`web/out`) est servi par Express, à la
-même origine que l'API et Socket.io. Elle permet de :
+At startup, the orchestrator serves the web console on **`http://<IP_ORCHESTRATEUR>:3000`**.
+The console is a **React / Next.js** application (`web/` folder, split per
+component — see §6.1): the static build (`web/out`) is served by Express, on
+the same origin as the API and Socket.io. It lets you:
 
-* **Voir les graphiques en direct** (façon web dashboard de k6) : cartes de synthèse
-  (VUS, req/s, échecs/s, checks %, itérations/s, données reçues/envoyées) avec
-  sparklines, puis graphiques HTTP req/s + failed/s, données B/s, VUS et checks %.
-  Chaque graphique porte la **courbe de fusion** (tous les workers) **et une courbe
-  par worker** (en pointillés) : des **cases à cocher** sous chaque graphique
-  permettent d'afficher/masquer chaque série ; le survol affiche la valeur de toutes
-  les séries affichées à l'instant t.
-* **Explorer les métriques** : un sélecteur liste toutes les métriques produites par
-  k6 (ex. `http_req_duration`, `http_req_failed`…) ; pour chacune, le graphique
-  avg + p95 (fusion **et une courbe avg/p95 par worker**) et le tableau de
-  statistiques (count, rate, avg, p70/p80/p90/p95/p99, min, max) avec **une ligne
-  par source** (fusion + une par worker).
-* **Consulter les logs par worker** : chaque agent possède son onglet (pas de
-  concaténation) avec horodatage millisecondes et type `STDOUT`/`STDERR`.
-* **Lancer un test** (script k6 **collé** ou **pointé par un chemin `.js`**, VUS totales,
-  durée) et **arrêter** un test d'urgence, directement depuis l'interface. Le chemin est
-  lu sur la machine de l'orchestrateur puis injecté tel quel aux workers.
-* **Télécharger le rapport** de la session :
-  * **`.html`** — une page **autoportée** : graphiques SVG interactifs (infobulle avec la
-    valeur à l'instant t au survol) pour les séries principales **et chaque métrique**
-    (avg + p95), avec la courbe de fusion **et une courbe par worker** — des cases à
-    cocher par graphique pour afficher/masquer chaque série. Synthèse, tableau de
-    **toutes les métriques** (count, rate, min, avg, p70/p80/p90/p95/p99, max), et
-    logs par worker. S'ouvre dans le navigateur, aucun serveur requis.
-  * **`.json`** — le rapport complet : totaux (requêtes, échecs %, données, checks),
-    statistiques finales de toutes les métriques (percentiles inclus), les séries
-    horodatées par seconde (reconstruisables en graphiques, avec les valeurs **par
-    worker** dans `byWorker`), les statistiques finales **par worker**, et les logs
-    par worker.
-  * **`.txt`** — le résumé lisible (session, code de sortie par worker, **métriques par
-    worker** (VUS, requêtes, échecs, données, itérations), résumé global, métriques,
+* **Watch live charts** (k6 web-dashboard style): summary cards
+  (VUS, req/s, failed/s, checks %, iterations/s, data received/sent) with
+  sparklines, then HTTP req/s + failed/s charts, data B/s, VUS and checks %.
+  Each chart carries the **fusion curve** (all workers) **and one curve
+  per worker** (dashed): **checkboxes** under each chart
+  let you show/hide every series; hovering shows the value of every
+  visible series at time t.
+* **Explore metrics**: a selector lists every metric produced by
+  k6 (e.g. `http_req_duration`, `http_req_failed`…); for each one, an
+  avg + p95 chart (fusion **and an avg/p95 curve per worker**) and a
+  statistics table (count, rate, avg, p70/p80/p90/p95/p99, min, max) with **one row
+  per source** (fusion + one per worker).
+* **Inspect per-worker logs**: every agent has its own tab (no
+  concatenation), with millisecond timestamps and `STDOUT`/`STDERR` type.
+* **Start a test** (k6 script **pasted** or **pointed to by a `.js` path**, total VUS,
+  duration) and **stop** a test as an emergency stop, directly from the interface. The path is
+  read on the orchestrator's machine, then injected as-is to the workers.
+* **Download the session report**:
+  * **`.html`** — a **self-contained** page: interactive SVG charts (with a tooltip showing
+    the value at time t on hover) for the main series **and every metric**
+    (avg + p95), with the fusion curve **and one curve per worker** — checkboxes
+    per chart to show/hide every series. Summary,
+    **all-metrics** table (count, rate, min, avg, p70/p80/p90/p95/p99, max), and
+    per-worker logs. Opens in a browser, no server required.
+  * **`.json`** — the full report: totals (requests, failed %, data, checks),
+    final statistics for every metric (percentiles included), the
+    per-second timestamped series (reconstructable as charts, with the **per
+    worker** values in `byWorker`), the final statistics **per worker**, and the
+    per-worker logs.
+  * **`.txt`** — the human-readable summary (session, exit code per worker, **per-worker
+    metrics** (VUS, requests, failures, data, iterations), global summary, metrics,
     logs).
-  * **`JSON brut k6` (`.jsonl`)** — la sortie brute du `--out json=` de chaque worker,
-    ligne par ligne (métadonnées + points de données, format JSON Lines), re-téléchargeable
-    par session **et par worker** via le sélecteur du bandeau « Rapport ».
-  
-  Les 10 dernières sessions restent sélectionnables dans le menu déroulant du
-  bandeau « Rapport ».
-* **Suivre l'état des workers** (Disponible / Occupé) en temps réel.
+  * **`Raw k6 JSON` (`.jsonl`)** — the raw `--out json=` output of every worker,
+    line by line (metadata + data points, JSON Lines format), re-downloadable
+    per session **and per worker** via the "Report" strip selector.
 
-### Métriques brutes k6 (`worker:metrics`)
+  The 10 most recent sessions stay selectable in the dropdown of the
+  "Report" strip.
+* **Follow worker state** (Available / Busy) in real time.
 
-Pour alimenter les graphiques, le worker lance k6 avec **`--out json=<fichier
-éphémère>`** : chaque point de données k6 (une ligne JSON par requête/métrique)
-est relu ligne à ligne par le worker puis streamé vers l'orchestrateur via l'événement
-socket `worker:metrics` (`{ data: [ { metric, data: { value, count } } ] }`).
-L'orchestrateur agrège les valeurs (taux/seconde, min/max, percentiles sur fenêtre
-glissante de 5 000 valeurs) **globalement (fusion de tous les workers) et par
-worker**, et diffuse un snapshot par seconde (`ui:metrics`) à la console : il porte
-la courbe de fusion **et une courbe par worker**, avec les cases à cocher
-d'affichage. Les VUS affichées sont la **somme des VUS actives de chaque worker**.
-Les logs console de k6 continuent d'arriver via `worker:log`.
+### Raw k6 metrics (`worker:metrics`)
 
-### API HTTP additionnelle (rapport & sessions)
+To feed the charts, the worker runs k6 with **`--out json=<ephemeral
+file>`**: every k6 data point (one JSON line per request/metric)
+is re-read line by line by the worker, then streamed to the orchestrator via the
+`worker:metrics` socket event (`{ data: [ { metric, data: { value, count } } ] }`).
+The orchestrator aggregates the values (rate/second, min/max, percentiles over a
+sliding window of 5,000 values) **globally (fusion of every worker) and per
+worker**, and broadcasts a snapshot per second (`ui:metrics`) to the console: it carries
+the fusion curve **and one curve per worker**, with the show/hide
+checkboxes. The displayed VUS are the **sum of every worker's active VUS**.
+k6 console logs keep arriving via `worker:log`.
 
-| Méthode | Route                        | Description                                                        |
+### Additional HTTP API (reports & sessions)
+
+| Method | Route                        | Description                                                        |
 |--------|------------------------------|------------------------------------------------------------------|
-| GET    | `/api/test/sessions`         | Liste des 10 dernières sessions (statut, VUS, durée, VUS max, workers) |
-| GET    | `/api/test/report`           | Rapport JSON de la session en cours (ou de la dernière)             |
-| GET    | `/api/test/report?format=txt`| Rapport texte (résumé) de la session en cours                       |
-| GET    | `/api/test/report?format=html`| Rapport HTML autoporté (graphiques SVG + toutes les métriques)       |
-| GET    | `/api/test/report?session=`  | Rapport d'une session précise (identifiant `sess-…`)               |
-| GET    | `/api/raw-metrics`           | Sortie JSON brute k6 d'un worker (`?session=&worker=`, JSON Lines) |
-| POST   | `/api/test/start`            | Lancement d'un test distribué (409 si un test est déjà en cours)   |
-| POST   | `/api/test/stop`             | Arrêt d'urgence de tous les tests                                  |
+| GET    | `/api/test/sessions`         | List of the 10 most recent sessions (status, VUS, duration, max VUS, workers) |
+| GET    | `/api/test/report`           | JSON report of the running session (or the last one)             |
+| GET    | `/api/test/report?format=txt`| Text report (summary) of the running session                       |
+| GET    | `/api/test/report?format=html`| Self-contained HTML report (SVG charts + every metric)       |
+| GET    | `/api/test/report?session=`  | Report of a specific session (id `sess-…`)               |
+| GET    | `/api/raw-metrics`           | Raw k6 JSON output of a worker (`?session=&worker=`, JSON Lines) |
+| POST   | `/api/test/start`            | Start a distributed test (409 if a test is already running)   |
+| POST   | `/api/test/stop`             | Emergency stop of all tests                                  |
 
-> **Note :** un seul test est exécuté à la fois. Si une session est encore en cours
-> (par exemple après un arrêt d'urgence, tant que k6 n'a pas émis son code de sortie),
-> `POST /api/test/start` répond `409`.
+> **Note:** only one test runs at a time. If a session is still in progress
+> (e.g. after an emergency stop, as long as k6 has not emitted its exit code),
+> `POST /api/test/start` answers `409`.
 
-## 6. Structure du code de l'Orchestrateur
+## 6. Orchestrator Code Structure
 
-Le code est découpé par responsabilité — « par controller / socket » — dans
-`orchestrator/`. Le point d'entrée (`orchestrator.js`, ~40 lignes) ne fait que
-câbler express + socket.io et lancer l'écoute ; tout le reste est importé :
+The code is split by responsibility — "per controller / socket" — in
+`orchestrator/`. The entry point (`orchestrator.js`, ~40 lines) only
+wires express + socket.io and starts listening; everything else is imported:
 
-| Module          | Rôle                                                                 |
+| Module          | Role                                                                 |
 |-----------------|----------------------------------------------------------------------|
-| `orchestrator.js`| Point d'entrée : `app` + `io` + `listen` (assemblage des modules)      |
-| `constants.js`  | Plafonds mémoire / console (sessions, logs, percentiles, JSON brut)    |
-| `utils.js`      | Formatage partagé (horodatages, octets)                               |
-| `state.js`      | Registre en mémoire : workers + sessions, source de vérité de la session courante et diffusions console |
-| `metrics.js`    | Agrégation k6 (`MetricAgg`, percentiles, brut), fusion **+ par worker**, snapshot par seconde (`ui:metrics`) |
-| `workers.js`    | Événements workers : logs k6 par worker (tampon de ligne) + clôture de fin de test |
-| `scripts.js`    | Validation du script k6 (rejet des imports de modules Node.js)         |
-| `reports/json.js`| Rapport JSON (séries + stats fusion/par worker + logs)                 |
-| `reports/txt.js`| Rapport texte (résumé + métriques par worker)                          |
-| `reports/html.js`| Rapport HTML autoporté (SVG + JS embarqué : cases à cocher, infobulle)  |
-| `routes.js`     | API HTTP (controllers) : `registerRoutes(app, io)`                   |
-| `sockets.js`    | Canal Socket.io : `registerSockets(io)` — workers + console web        |
+| `orchestrator.js`| Entry point: `app` + `io` + `listen` (module assembly)      |
+| `constants.js`  | Memory / console caps (sessions, logs, percentiles, raw JSON)    |
+| `utils.js`      | Shared formatting (timestamps, bytes)                               |
+| `state.js`      | In-memory registry: workers + sessions, source of truth for the current session and console broadcasts |
+| `metrics.js`    | k6 aggregation (`MetricAgg`, percentiles, raw), fusion **+ per worker**, per-second snapshot (`ui:metrics`) |
+| `workers.js`    | Worker events: per-worker k6 logs (line buffer) + end-of-test close-out |
+| `scripts.js`    | k6 script validation (rejects Node.js module imports)         |
+| `reports/json.js`| JSON report (series + fusion/per-worker stats + logs)                 |
+| `reports/txt.js`| Text report (summary + per-worker metrics)                          |
+| `reports/html.js`| Self-contained HTML report (SVG + embedded JS: checkboxes, tooltip)  |
+| `routes.js`     | HTTP API (controllers): `registerRoutes(app, io)`                   |
+| `sockets.js`    | Socket.io channel: `registerSockets(io)` — workers + web console        |
 
-Le worker (`worker/worker.js`) n'est pas concerné par ce découpage : il parle
-uniquement le protocole socket (`worker:ready`, `worker:log`, `worker:metrics`,
-`worker:test_finished`, …) et reste un fichier unique.
+The worker (`worker/worker.js`) is not part of this split: it only speaks
+the socket protocol (`worker:ready`, `worker:log`, `worker:metrics`,
+`worker:test_finished`, …) and remains a single file.
 
-### 6.1 Console web (`web/`) — React / Next.js
+### 6.1 Web Console (`web/`) — React / Next.js
 
-La partie UI est découpée en **composants React** (un par panneau), avec le
-même style CSS (porté dans `web/app/globals.css`).
-Un seul état partagé (`hooks/useDashboard.js`) : socket `ui:*`, session affichée /
-« piquetée » / RUNNING, snapshots, séries par worker, logs, watchdog « refresh
-forcé » — les composants n'ont plus que leur rendu. Le canvas (graphiques,
-sparklines, infobulle) reste un moteur impératif sans dépendance, dans
+The UI part is split into **React components** (one per panel), with the
+same CSS style (moved into `web/app/globals.css`).
+A single shared state (`hooks/useDashboard.js`): socket `ui:*`, displayed session /
+"pinned" / RUNNING, snapshots, per-worker series, logs, "forced
+refresh" watchdog — the components only keep their rendering. The canvas (charts,
+sparklines, tooltip) stays a dependency-free imperative engine, in
 `lib/charts.js`.
 
-| Fichier                           | Rôle                                                                          |
-|-----------------------------------|-------------------------------------------------------------------------------|
-| `app/layout.jsx` / `app/page.jsx` | Coquille (polices, CSS global) + assemblage de la page                        |
-| `hooks/useDashboard.js`           | « Cerveau » : socket `ui:*`, sessions, rows, séries, logs, watchdog           |
-| `lib/config.js`                   | URL de l'orchestrateur (`NEXT_PUBLIC_ORCHESTRATOR_URL`) + plafonds            |
-| `lib/format.js`                   | Formatage (horodatages, nombres, octets)                                     |
-| `lib/charts.js`                   | Moteur canvas (grille, courbes, sparklines, infobulle) + defs de séries       |
-| `components/TopBar.jsx`           | Barre du haut (marque, compte de workers, LED socket)                         |
-| `components/WorkersPanel.jsx`     | Liste des workers (statut Disponible / Occupé)                               |
-| `components/TestForm.jsx`         | Lancement de test (script collé ou `scriptPath`, VUS, durée, stop)           |
-| `components/Cards.jsx`            | Cartes de synthèse + sparklines canvas                                        |
-| `components/ChartsGrid.jsx`       | 4 graphiques principaux + cases à cocher des séries (fusion + par worker)     |
-| `components/MetricExplorer.jsx`   | Explorateur de métrique : graphique avg/p95 + tableau par source              |
-| `components/LogsPanel.jsx`        | Logs par worker (onglets, auto-scroll, « Vider »)                             |
-| `components/ReportStrip.jsx`      | Bandeau Rapport : sessions, JSON brut k6, téléchargements html/json/txt/jsonl  |
+| File                           | Role                                                                          |
+|--------------------------------|------------------------------------------------------------------------------|
+| `app/layout.jsx` / `app/page.jsx` | Shell (fonts, global CSS) + page assembly                        |
+| `hooks/useDashboard.js`           | "Brain": socket `ui:*`, sessions, rows, series, logs, watchdog           |
+| `lib/config.js`                   | Orchestrator URL (`NEXT_PUBLIC_ORCHESTRATOR_URL`) + caps            |
+| `lib/format.js`                   | Formatting (timestamps, numbers, bytes)                                     |
+| `lib/charts.js`                   | Canvas engine (grid, curves, sparklines, tooltip) + series defs       |
+| `components/TopBar.jsx`           | Top bar (brand, worker count, socket LED)                         |
+| `components/WorkersPanel.jsx`     | Worker list (status Available / Busy)                               |
+| `components/TestForm.jsx`         | Test launch (pasted script or `scriptPath`, VUS, duration, stop)           |
+| `components/Cards.jsx`            | Summary cards + canvas sparklines                                        |
+| `components/ChartsGrid.jsx`       | 4 main charts + series checkboxes (fusion + per worker)     |
+| `components/MetricExplorer.jsx`   | Metric explorer: avg/p95 chart + per-source table              |
+| `components/LogsPanel.jsx`        | Per-worker logs (tabs, auto-scroll, "Clear")                             |
+| `components/ReportStrip.jsx`      | Report strip: sessions, raw k6 JSON, html/json/txt/jsonl downloads  |

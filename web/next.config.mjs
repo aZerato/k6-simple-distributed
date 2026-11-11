@@ -1,5 +1,5 @@
-// Build en export statique : le dossier `out/` est ensuite servi par
-// l'orchestrateur Express (mêmes origines pour HTTP + Socket.io).
+// Static export build: the `out/` folder is then served by the
+// Express orchestrator (same origin for HTTP + Socket.io).
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   output: 'export'

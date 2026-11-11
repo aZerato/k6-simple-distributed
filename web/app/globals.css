@@ -1,6 +1,6 @@
 /* ============================================================
    k6 Orchestrator — Console web
-   Direction : "salle de contrôle" — sombre, phosphore, terminal
+   Direction: "control room" — dark, phosphor, terminal
    ============================================================ */
 
 :root {
@@ -107,7 +107,7 @@ body {
   box-shadow: 0 0 10px rgba(70, 229, 177, 0.8);
 }
 
-/* ---------- Grille principale ---------- */
+/* ---------- Main grid ---------- */
 
 .grid {
   display: grid;
@@ -130,7 +130,7 @@ body {
   min-width: 0;
 }
 
-/* ---------- Panneaux ---------- */
+/* ---------- Panels ---------- */
 
 .panel {
   background: linear-gradient(180deg, #111826, var(--panel-2));
@@ -203,7 +203,7 @@ body {
   padding: 4px 2px;
 }
 
-/* Badges de statut */
+/* Status badges */
 
 .badge {
   display: inline-flex;
@@ -257,7 +257,7 @@ body {
   50% { opacity: 0.35; }
 }
 
-/* ---------- Formulaire de test ---------- */
+/* ---------- Test form ---------- */
 
 .field {
   display: flex;
@@ -325,7 +325,7 @@ input::placeholder { color: var(--text-faint); }
   color: var(--text-faint);
 }
 
-/* ---------- Boutons ---------- */
+/* ---------- Buttons ---------- */
 
 .btn {
   font-family: 'Chakra Petch', sans-serif;
@@ -379,7 +379,7 @@ input::placeholder { color: var(--text-faint); }
 .btn-ghost { background: transparent; border-color: #223047; color: var(--text-dim); }
 .btn-ghost:hover { color: var(--accent); border-color: rgba(70, 229, 177, 0.5); }
 
-/* ---------- Cartes de synthèse (façon dashboard k6) ---------- */
+/* ---------- Summary cards (k6-dashboard style) ---------- */
 
 .cards {
   display: grid;
@@ -419,7 +419,7 @@ input::placeholder { color: var(--text-faint); }
 
 .card .card-value.neg { color: var(--red); }
 
-/* ---------- Graphiques ---------- */
+/* ---------- Charts ---------- */
 
 .charts-grid {
   display: grid;
@@ -468,7 +468,7 @@ input::placeholder { color: var(--text-faint); }
 .sw-blue { background: var(--blue); }
 .sw-amber { background: var(--amber); }
 
-/* Séries affichées : cases à cocher (Fusion + une par worker) sous chaque graphique */
+/* Visible series: checkboxes (merged + one per worker) under each chart */
 .series-toggle {
   display: flex;
   flex-wrap: wrap;
@@ -502,7 +502,7 @@ input::placeholder { color: var(--text-faint); }
 
 .sr:hover { color: var(--text); }
 
-/* Infobulle de survol des graphiques (valeur à l'instant t) */
+/* Chart hover tooltip (value at time t) */
 .chart-tip {
   position: fixed;
   display: none;
@@ -519,7 +519,7 @@ input::placeholder { color: var(--text-faint); }
 }
 .chart-tip .tt { color: var(--accent); display: block; }
 
-/* ---------- Explorateur de métrique ---------- */
+/* ---------- Metric explorer ---------- */
 
 .metric-head {
   display: flex;
@@ -599,7 +599,7 @@ input::placeholder { color: var(--text-faint); }
   color: var(--text-dim);
 }
 
-/* ---------- Logs par worker ---------- */
+/* ---------- Logs per worker ---------- */
 
 .logs-head {
   display: flex;
@@ -731,7 +731,7 @@ input::placeholder { color: var(--text-faint); }
 .ln-log .x { color: #c6d2e5; white-space: pre-wrap; word-break: break-word; flex: 1; }
 .ln-log.err .x { color: #ff9c9c; }
 
-/* ---------- Bandeau rapport ---------- */
+/* ---------- Report strip ---------- */
 
 .report-strip {
   display: flex;
@@ -758,7 +758,7 @@ input::placeholder { color: var(--text-faint); }
   white-space: nowrap;
 }
 
-/* ---------- Entrées animées ---------- */
+/* ---------- Animated entries ---------- */
 
 @keyframes rise {
   from { opacity: 0; transform: translateY(10px); }

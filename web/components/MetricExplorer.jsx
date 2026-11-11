@@ -2,8 +2,8 @@ import { fmtInt, fmtNum } from '../lib/format';
 import { buildSeries, isSeriesOn, metricDef } from '../lib/charts';
 
 /*
- * Explorateur de métrique : sélection + graphique (avg + p95, et par worker)
- * + tableau des percentiles (ligne fusion + une par worker).
+ * Metric explorer: selection + chart (avg + p95, and per worker)
+ * + percentiles table (merged row + one row per worker).
  */
 
 const COLS = ['count', 'rate', 'avg', 'p70', 'p80', 'p90', 'p95', 'p99', 'min', 'max'];
@@ -26,9 +26,9 @@ function MetricTable({ rows, workerIds, metricName }) {
   let note;
   if (!st) {
     body = row('fusion', { count: null, rate: null, avg: null, p70: null, p80: null, p90: null, p95: null, p99: null, min: null, max: null });
-    note = 'Pas encore de points pour cette métrique.';
+    note = 'No data points for this metric yet.';
   } else {
-    // Ligne de fusion + une ligne par worker
+    // Merged row + one row per worker
     const workerRows = workerIds
       .map((wid) => {
         const wst = (lastRow.byWorker || {})[wid] && (lastRow.byWorker[wid][metricName]);
@@ -36,7 +36,7 @@ function MetricTable({ rows, workerIds, metricName }) {
       })
       .filter(Boolean);
     body = [row('fusion', st, 'fusion-row'), ...workerRows];
-    note = `Métrique « ${metricName} » — percentiles recalculés sur les ${Math.min(rows.length, 5000)} derniers points.`;
+    note = `Metric "${metricName}" — percentiles recomputed over the latest ${Math.min(rows.length, 5000)} points.`;
   }
 
   return (
@@ -63,10 +63,10 @@ export default function MetricExplorer({ rows, workerIds, seriesVisible, metricN
   return (
     <div className="panel metric-panel reveal">
       <div className="metric-head">
-        <h2 className="panel-title inline">Métrique</h2>
-        <select id="metric-select" className="select" aria-label="Métrique" value={metricName} onChange={(e) => onMetricChange(e.target.value)}>
+        <h2 className="panel-title inline">Metric</h2>
+        <select id="metric-select" className="select" aria-label="Metric" value={metricName} onChange={(e) => onMetricChange(e.target.value)}>
           {metricNames.length === 0 ? (
-            <option value="">(en attente de données)</option>
+            <option value="">(waiting for data)</option>
           ) : (
             metricNames.map((n) => (
               <option value={n} key={n}>{n}</option>
@@ -79,7 +79,7 @@ export default function MetricExplorer({ rows, workerIds, seriesVisible, metricN
         <div className="metric-chart-wrap">
           <canvas ref={(el) => { canvasRefs.current['metric'] = el; }} />
           {def && (
-            <div className="series-toggle" aria-label="Séries affichées">
+            <div className="series-toggle" aria-label="Visible series">
               {buildSeries(def, workerIds).map((s) => (
                 <label className="sr" key={s.id}>
                   <input

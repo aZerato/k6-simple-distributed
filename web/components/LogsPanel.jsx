@@ -2,10 +2,10 @@ import { MAX_DOM_LINES } from '../lib/config';
 import { fmtTs } from '../lib/format';
 
 /*
- * Logs par worker (pas de concaténation : onglets par agent).
- * - mémoire : workerLogsRef (plafond MAX_LOG_KEEP par worker, côté hook)
- * - vue    : les MAX_DOM_LINES dernières lignes du worker actif, filtrées
-             par l'horodatage « Vider »
+ * Logs per worker (no concatenation: tabs per agent).
+ * - memory: workerLogsRef (MAX_LOG_KEEP cap per worker, on the hook side)
+ * - view  : the MAX_DOM_LINES latest lines of the active worker, filtered
+             by the "Clear" timestamp
  */
 export default function LogsPanel({
   workerLogsRef,
@@ -29,15 +29,15 @@ export default function LogsPanel({
   return (
     <div className="panel logs-panel reveal">
       <div className="logs-head">
-        <h2 className="panel-title inline">Logs par worker</h2>
+        <h2 className="panel-title inline">Logs per worker</h2>
         <span className="spacer" />
-        <span className="log-count"><span>{totalLogLines.toLocaleString('fr-FR')}</span> lignes</span>
+        <span className="log-count"><span>{totalLogLines.toLocaleString('en-US')}</span> lines</span>
         <label className="switch">
           <input type="checkbox" checked={autoScroll} onChange={(e) => setAutoScroll(e.target.checked)} />
           <span>Auto-scroll</span>
         </label>
         <button className="btn btn-ghost" id="btn-clear" type="button" onClick={clearLogs}>
-          Vider
+          Clear
         </button>
       </div>
       <div className="logs-tabs">
@@ -70,7 +70,7 @@ export default function LogsPanel({
             );
           })}
         </pre>
-        <div className="log-empty"><span>En attente d'un test…</span></div>
+        <div className="log-empty"><span>Waiting for a test…</span></div>
       </div>
     </div>
   );

@@ -1,6 +1,6 @@
 import { CARDS } from '../lib/charts';
 
-// Cartes de synthèse façon dashboard k6 (valeurs + sparklines canvas).
+// Summary cards in the k6-dashboard style (values + canvas sparklines).
 export default function Cards({ rows, canvasRefs }) {
   const lastRow = rows[rows.length - 1] || null;
   return (

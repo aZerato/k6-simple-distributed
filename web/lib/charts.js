@@ -1,15 +1,15 @@
 /* ============================================================
-   Moteur de dessin canvas (porté de public/app.js, sans dépendance)
-   + définitions des graphiques / séries / cartes de synthèse.
+   Canvas drawing engine (ported from public/app.js, dependency-free)
+   + definitions of the charts / series / summary cards.
    ============================================================ */
 import { fmtInt, fmtNum, fmtPct, fmtBytesRate } from './format';
 
-/* ---------- Palette des courbes par worker (distincte des couleurs « fusion ») ---------- */
+/* ---------- Per-worker curve palette (distinct from the "merged" colors) ---------- */
 
 export const WORKER_PALETTE = ['#c084fc', '#45e3ff', '#ff8fa3', '#a3e635', '#f0abfc', '#ffd166'];
 export const workerColor = (i) => WORKER_PALETTE[i % WORKER_PALETTE.length];
 
-/* ---------- Valeurs brutes des canvas ---------- */
+/* ---------- Raw canvas values ---------- */
 
 export function prep(canvas) {
   const dpr = window.devicePixelRatio || 1;
@@ -41,8 +41,8 @@ export function axisLabel(v) {
 }
 
 /*
- * valuesBySeries : tableau de tableaux (un par série), indexé par le temps.
- * hoverIndex >= 0 : trace un repère vertical + pastilles sur chaque série.
+ * valuesBySeries : array of arrays (one per series), indexed by time.
+ * hoverIndex >= 0 : draws a vertical marker + a dot on each series.
  */
 export function drawLines(canvas, rows, seriesDef, valuesBySeries, hoverIndex = -1) {
   const { ctx, w, h } = prep(canvas);
@@ -50,7 +50,7 @@ export function drawLines(canvas, rows, seriesDef, valuesBySeries, hoverIndex = 
   const iw = w - padL - padR;
   const ih = h - padT - padB;
 
-  // Grille horizontale
+  // Horizontal grid
   ctx.strokeStyle = 'rgba(160,180,210,0.07)';
   ctx.lineWidth = 1;
   for (let i = 0; i <= 3; i++) {
@@ -66,7 +66,7 @@ export function drawLines(canvas, rows, seriesDef, valuesBySeries, hoverIndex = 
     ctx.fillStyle = 'rgba(120,135,160,0.55)';
     ctx.font = '12px "IBM Plex Mono", monospace';
     ctx.textAlign = 'center';
-    ctx.fillText('en attente de données…', w / 2, h / 2);
+    ctx.fillText('waiting for data…', w / 2, h / 2);
     return;
   }
 
@@ -74,7 +74,7 @@ export function drawLines(canvas, rows, seriesDef, valuesBySeries, hoverIndex = 
   for (const arr of valuesBySeries) for (const v of arr) if (v > max) max = v;
   const top = niceMax(max || 1);
 
-  // Graduations
+  // Axis ticks
   ctx.font = '9.5px "IBM Plex Mono", monospace';
   ctx.fillStyle = 'rgba(120,135,160,0.6)';
   ctx.textAlign = 'left';
@@ -110,7 +110,7 @@ export function drawLines(canvas, rows, seriesDef, valuesBySeries, hoverIndex = 
     ctx.setLineDash([]);
   });
 
-  // Repère de survol : ligne verticale + pastille sur chaque série
+  // Hover marker: vertical line + dot on each series
   if (hoverIndex != null && hoverIndex >= 0 && hoverIndex < n) {
     const hx = x(hoverIndex);
     ctx.strokeStyle = 'rgba(220,235,255,0.35)';
@@ -149,9 +149,9 @@ export function drawSpark(canvas, values, color) {
   ctx.stroke();
 }
 
-/* ---------- Séries : fusion + une par worker ---------- */
+/* ---------- Series: merged + one per worker ---------- */
 
-// Valeur d'une métrique pour un worker donné (0 tant que le worker n'émet pas)
+// Value of a metric for a given worker (0 as long as the worker does not emit)
 export function wStat(r, wid, metric, key, mult = 1) {
   const bw = (r.byWorker || {})[wid];
   const v = bw && bw[metric] ? bw[metric][key] : null;
@@ -159,8 +159,8 @@ export function wStat(r, wid, metric, key, mult = 1) {
 }
 
 /*
- * Liste complète des séries d'un graphique : les courbes de fusion d'abord,
- * puis une (ou deux) courbe(s) par worker, dans l'ordre d'apparition.
+ * Complete list of a chart's series: the merged curves first,
+ * then one (or two) curve(s) per worker, in order of appearance.
  */
 export function buildSeries(c, workerIds) {
   const out = [];
@@ -192,21 +192,21 @@ export function buildSeries(c, workerIds) {
   return out;
 }
 
-// Visibilité d'une série (défaut : affichée).
+// Visibility of a series (default: shown).
 export const isSeriesOn = (visible, id) => visible.get(id) !== false;
 
-// Trace d'un graphique : séries affichées + valeurs sur les `rows`.
+// Drawing of a chart: visible series + values over the `rows`.
 export function drawSeries(canvas, c, { rows, workerIds, visible, hoverIndex = -1 }) {
   const series = buildSeries(c, workerIds).filter((s) => isSeriesOn(visible, s.id));
   const vals = series.map((s) => rows.map((r) => s.get(r)));
   drawLines(canvas, rows, series, vals, hoverIndex);
 }
 
-/* ---------- Définitions des graphiques principaux ----------
- * Chaque graphique porte :
- *  - les courbes de FUSION (tous les workers, agrégées par l'orchestrateur),
- *  - une courbe par WORKER (r.byWorker), affichable/masquable par case à cocher.
- * Les courbes des workers se désignent en pointillés (même couleur, 2e rôle).
+/* ---------- Definitions of the main charts ----------
+ * Each chart carries:
+ *  - the MERGED curves (every worker, aggregated by the orchestrator),
+ *  - one curve per WORKER (r.byWorker), show/hide via checkbox.
+ * The workers' curves are drawn dashed (same color, second role).
  */
 export const CHART_DEFS = [
   {
@@ -225,12 +225,12 @@ export const CHART_DEFS = [
   {
     key: 'data',
     fusion: [
-      { label: 'reçues', get: (r) => r.rates.dataReceived, fmt: fmtBytesRate },
-      { label: 'envoyées', get: (r) => r.rates.dataSent, fmt: fmtBytesRate }
+      { label: 'received', get: (r) => r.rates.dataReceived, fmt: fmtBytesRate },
+      { label: 'sent', get: (r) => r.rates.dataSent, fmt: fmtBytesRate }
     ],
     workerRoles: [
-      { label: 'reçues', get: (r, wid) => wStat(r, wid, 'data_received', 'rate'), fmt: fmtBytesRate },
-      { label: 'envoyées', get: (r, wid) => wStat(r, wid, 'data_sent', 'rate'), fmt: fmtBytesRate }
+      { label: 'received', get: (r, wid) => wStat(r, wid, 'data_received', 'rate'), fmt: fmtBytesRate },
+      { label: 'sent', get: (r, wid) => wStat(r, wid, 'data_sent', 'rate'), fmt: fmtBytesRate }
     ],
     colors: ['#5eb1ff', '#ffb224'],
     fill: 'rgba(94,177,255,0.10)'
@@ -238,7 +238,7 @@ export const CHART_DEFS = [
   {
     key: 'vus',
     fusion: [
-      { label: 'actifs', get: (r) => r.vus.current, fmt: fmtInt }
+      { label: 'active', get: (r) => r.vus.current, fmt: fmtInt }
     ],
     workerRoles: [
       { label: 'VUS', get: (r, wid) => wStat(r, wid, 'vus', 'last'), fmt: fmtInt }
@@ -259,7 +259,7 @@ export const CHART_DEFS = [
   }
 ];
 
-// Définition du graphique « Métrique » (sélection de l'explorateur).
+// Definition of the "Metric" chart (explorer selection).
 export function metricDef(metricName) {
   return {
     key: 'metric',
@@ -276,19 +276,19 @@ export function metricDef(metricName) {
   };
 }
 
-/* ---------- Cartes de synthèse (façon dashboard k6) ---------- */
+/* ---------- Summary cards (k6-dashboard style) ---------- */
 
 export const CARDS = [
   { label: 'VUS', get: (r) => r.vus.current, fmt: fmtInt, spark: (r) => r.vus.current, color: '#46e5b1' },
   { label: 'HTTP req/s', get: (r) => r.rates.httpReq, fmt: fmtInt, spark: (r) => r.rates.httpReq, color: '#46e5b1' },
-  { label: 'Échecs /s', get: (r) => r.rates.httpFailed, fmt: fmtInt, spark: (r) => r.rates.httpFailed, color: '#ff5c5c', neg: true },
-  { label: 'Checks passés', get: (r) => (r.checks ? r.checks.pct : null), fmt: fmtPct, spark: (r) => (r.checks && r.checks.pct != null ? r.checks.pct : 0), color: '#46e5b1' },
-  { label: 'Itérations /s', get: (r) => r.rates.iterations, fmt: fmtInt, spark: (r) => r.rates.iterations, color: '#46e5b1' },
-  { label: 'Données reçues', get: (r) => r.rates.dataReceived, fmt: fmtBytesRate, spark: (r) => r.rates.dataReceived, color: '#5eb1ff' },
-  { label: 'Données envoyées', get: (r) => r.rates.dataSent, fmt: fmtBytesRate, spark: (r) => r.rates.dataSent, color: '#ffb224' }
+  { label: 'Failures /s', get: (r) => r.rates.httpFailed, fmt: fmtInt, spark: (r) => r.rates.httpFailed, color: '#ff5c5c', neg: true },
+  { label: 'Checks passed', get: (r) => (r.checks ? r.checks.pct : null), fmt: fmtPct, spark: (r) => (r.checks && r.checks.pct != null ? r.checks.pct : 0), color: '#46e5b1' },
+  { label: 'Iterations /s', get: (r) => r.rates.iterations, fmt: fmtInt, spark: (r) => r.rates.iterations, color: '#46e5b1' },
+  { label: 'Data received', get: (r) => r.rates.dataReceived, fmt: fmtBytesRate, spark: (r) => r.rates.dataReceived, color: '#5eb1ff' },
+  { label: 'Data sent', get: (r) => r.rates.dataSent, fmt: fmtBytesRate, spark: (r) => r.rates.dataSent, color: '#ffb224' }
 ];
 
-/* ---------- Infobulle de survol (valeur à l'instant t) ---------- */
+/* ---------- Hover tooltip (value at time t) ---------- */
 
 export function showChartTip(tipEl, e, html) {
   tipEl.innerHTML = html;
@@ -304,7 +304,7 @@ export function hideChartTip(tipEl) {
   tipEl.style.display = 'none';
 }
 
-/* ---------- Index de survol (valeur à l'instant t) ---------- */
+/* ---------- Hover index (value at time t) ---------- */
 
 export function chartIndexFromX(canvas, x, n) {
   if (n <= 0) return -1;
@@ -316,7 +316,7 @@ export function chartIndexFromX(canvas, x, n) {
   return Math.max(0, Math.min(n - 1, i));
 }
 
-/* ---------- Métriques connues (sélection de l'explorateur) ---------- */
+/* ---------- Known metrics (explorer selection) ---------- */
 
 export function knownMetrics(rows) {
   const out = [];

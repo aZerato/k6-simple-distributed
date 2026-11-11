@@ -1,4 +1,4 @@
-// Petits utilitaires de formatage (dates, octets) partagés par les modules.
+// Small formatting utilities (dates, bytes) shared by the modules.
 
 export function pad(n, l = 2) { return String(n).padStart(l, '0'); }
 
@@ -7,7 +7,7 @@ export function stamp(d) {
   return `${pad(dt.getHours())}:${pad(dt.getMinutes())}:${pad(dt.getSeconds())}.${pad(dt.getMilliseconds(), 3)}`;
 }
 
-export function dateFr(d) {
+export function dateFull(d) {
   const dt = new Date(d);
   return `${pad(dt.getDate())}/${pad(dt.getMonth() + 1)}/${dt.getFullYear()} ${stamp(dt)}`;
 }

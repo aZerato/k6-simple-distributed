@@ -10,18 +10,18 @@ import MetricExplorer from '../components/MetricExplorer';
 import LogsPanel from '../components/LogsPanel';
 import ReportStrip from '../components/ReportStrip';
 
-// Page de la console : un seul état partagé (useDashboard), les panneaux
-// n'ont plus que leur rendu.
+// Console page: a single shared state (useDashboard); the panels have nothing
+// left but their rendering.
 export default function Page() {
   const dash = useDashboard();
 
-  // Dessin live : snapshots 1/s, séries, métrique sélectionnée, réinitialisation
+  // Live drawing: 1/s snapshots, series, selected metric, reset
   useEffect(() => {
     dash.drawAll();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dash.rowsRev, dash.workerIds, dash.seriesVisible, dash.metricName, dash.drawAll]);
 
-  // Redessin au redimensionnement de la fenêtre (comme la console legacy)
+  // Redraw on window resize (same as the legacy console)
   useEffect(() => {
     const onResize = () => dash.drawAll();
     window.addEventListener('resize', onResize);

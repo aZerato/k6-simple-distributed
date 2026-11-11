@@ -1,10 +1,9 @@
-// Rapport HTML (GET /api/test/report?format=html) : page autoportée.
+// HTML report (GET /api/test/report?format=html): self-contained page.
 //
-// Grille + axes rendus côté serveur en SVG ; les courbes (une par série :
-// fusion + une par worker) sont tracées par le JS embarqué à partir de
-// `data`, afin que les cases à cocher affichent/masquent chaque série.
-// Le survol (crosshair + infobulle) lit les valeurs de TOUTES les séries
-// visibles à l'instant t.
+// Grid + axes rendered on the server side in SVG; the curves (one per series:
+// merged + one per worker) are drawn by the embedded JS from `data`, so that
+// the checkboxes can show/hide each series. Hovering (crosshair + tooltip)
+// reads the values of ALL visible series at time t.
 import { buildJsonReport } from './json.js';
 
 function htmlEsc(v) {
@@ -36,10 +35,10 @@ function niceMaxH(v) {
   return (d <= 1 ? 1 : d <= 2 ? 2 : d <= 5 ? 5 : 10) * e;
 }
 
-// Un graphique du rapport : grille + axes rendus côté serveur ; les courbes
-// (une par série) sont tracées par le JS embarqué à partir de `data`, afin que
-// les cases à cocher (Fusion / chaque worker) affichent-masquent chaque série.
-// Renvoie { svg, data } : data alimente le rendu, le survol (crosshair + infobulle).
+// One report chart: grid + axes rendered on the server side; the curves
+// (one per series) are drawn by the embedded JS from `data`, so that the
+// checkboxes (merged / each worker) can show-hide each series.
+// Returns { svg, data }: data drives the rendering, the hover (crosshair + tooltip).
 function svgChart(times, seriesList) {
   const W = 880, H = 170, pL = 50, pR = 14, pT = 12, pB = 24;
   const iw = W - pL - pR, ih = H - pT - pB;
@@ -51,7 +50,7 @@ function svgChart(times, seriesList) {
 
   const X = (i) => pL + (n === 1 ? iw / 2 : (i / (n - 1)) * iw);
   const axisLbl = (v) => (v >= 1e6 ? (v / 1e6).toFixed(1) + 'M' : v >= 1e3 ? (v / 1e3).toFixed(1) + 'k' : v % 1 ? v.toFixed(1) : String(v));
-  const tLbl = (iso) => new Date(iso).toLocaleTimeString('fr-FR');
+  const tLbl = (iso) => new Date(iso).toLocaleTimeString('en-US');
 
   let g = '';
   for (let i = 0; i <= 3; i++) {
@@ -76,16 +75,16 @@ export function buildHtmlReport(s) {
   const Mp = (k) => rows.map((r) => (r.metrics[k] ? r.metrics[k].p95 : null));
   const hasMetric = (k) => !!rep.metrics[k];
 
-  // Couleurs des courbes par worker (distinctes des couleurs « fusion »)
+  // Curve colors per worker (distinct from the "merged" colors)
   const WPAL = ['#c084fc', '#45e3ff', '#ff8fa3', '#a3e635', '#f0abfc', '#ffd166'];
   const wcolor = (i) => WPAL[i % WPAL.length];
 
-  // Workers ayant produit des points, dans l'ordre de la session
+  // Workers that produced data points, in session order
   const present = new Set();
   for (const r of rows) for (const id of Object.keys(r.byWorker || {})) present.add(id);
   const workerIds = rep.workers.map((w) => w.id).filter((id) => present.has(id));
 
-  // Une série par worker ; filtrée si ce worker n'a jamais émis la métrique
+  // One series per worker; filtered out if this worker never emitted the metric
   const allNull = (arr) => arr.every((v) => v == null || !isFinite(v));
   const wSeries = (label, fmt, getter, dash) => workerIds.map((id, i) => {
     const values = rows.map((r) => {
@@ -98,31 +97,31 @@ export function buildHtmlReport(s) {
 
   const charts = [
     { title: 'VUS', list: [
-      { name: 'VUS actifs (fusion)', color: '#46e5b1', fmt: 'int', values: rows.map((r) => r.vus) },
+      { name: 'Active VUS (merged)', color: '#46e5b1', fmt: 'int', values: rows.map((r) => r.vus) },
       ...wSeries('VUS', 'int', (bw) => (bw && bw.vus ? bw.vus.last : null)) ] },
     { title: 'HTTP req/s', list: [
-      { name: 'req/s (fusion)', color: '#46e5b1', fmt: 'int', values: rows.map((r) => r.reqRate) },
-      { name: 'failed/s (fusion)', color: '#ff5c5c', fmt: 'int', values: rows.map((r) => r.failedRate) },
+      { name: 'req/s (merged)', color: '#46e5b1', fmt: 'int', values: rows.map((r) => r.reqRate) },
+      { name: 'failed/s (merged)', color: '#ff5c5c', fmt: 'int', values: rows.map((r) => r.failedRate) },
       ...wSeries('req/s', 'int', (bw) => (bw && bw.http_reqs ? bw.http_reqs.rate : null)) ] },
-    { title: 'Données (B/s)', list: [
-      { name: 'reçues (fusion)', color: '#5eb1ff', fmt: 'bps', values: rows.map((r) => r.dataRecvRate) },
-      { name: 'envoyées (fusion)', color: '#ffb224', fmt: 'bps', values: rows.map((r) => r.dataSentRate) },
-      ...wSeries('reçues', 'bps', (bw) => (bw && bw.data_received ? bw.data_received.rate : null)) ] },
-    ...(hasMetric('checks') ? [{ title: 'Checks passés (%)', list: [
-      { name: 'checks % (fusion)', color: '#46e5b1', fmt: 'pct', values: rows.map((r) => r.checksPct) },
+    { title: 'Data (B/s)', list: [
+      { name: 'received (merged)', color: '#5eb1ff', fmt: 'bps', values: rows.map((r) => r.dataRecvRate) },
+      { name: 'sent (merged)', color: '#ffb224', fmt: 'bps', values: rows.map((r) => r.dataSentRate) },
+      ...wSeries('received', 'bps', (bw) => (bw && bw.data_received ? bw.data_received.rate : null)) ] },
+    ...(hasMetric('checks') ? [{ title: 'Checks passed (%)', list: [
+      { name: 'checks % (merged)', color: '#46e5b1', fmt: 'pct', values: rows.map((r) => r.checksPct) },
       ...wSeries('checks %', 'pct', (bw) => (bw && bw.checks ? bw.checks.avg * 100 : null)) ] }] : []),
-    ...(hasMetric('http_req_failed') ? [{ title: 'Échecs (%)', list: [
-      { name: 'failed % (fusion)', color: '#ff5c5c', fmt: 'pct', values: rows.map((r) => r.failedPct) },
+    ...(hasMetric('http_req_failed') ? [{ title: 'Failures (%)', list: [
+      { name: 'failed % (merged)', color: '#ff5c5c', fmt: 'pct', values: rows.map((r) => r.failedPct) },
       ...wSeries('failed %', 'pct', (bw) => (bw && bw.http_req_failed ? bw.http_req_failed.avg * 100 : null)) ] }] : []),
-    ...(hasMetric('iterations') ? [{ title: 'Itérations/s', list: [
-      { name: 'itér./s (fusion)', color: '#46e5b1', fmt: 'int', values: rows.map((r) => r.iterRate) },
-      ...wSeries('itér./s', 'int', (bw) => (bw && bw.iterations ? bw.iterations.rate : null)) ] }] : [])
+    ...(hasMetric('iterations') ? [{ title: 'Iterations/s', list: [
+      { name: 'iter/s (merged)', color: '#46e5b1', fmt: 'int', values: rows.map((r) => r.iterRate) },
+      ...wSeries('iter/s', 'int', (bw) => (bw && bw.iterations ? bw.iterations.rate : null)) ] }] : [])
   ];
   const metricNames = Object.keys(rep.metrics).sort();
   for (const name of metricNames) {
     charts.push({ title: name, list: [
-      { name: 'avg (fusion)', color: '#46e5b1', fmt: 'num', values: M(name) },
-      { name: 'p95 (fusion)', color: '#ffb224', fmt: 'num', values: Mp(name) },
+      { name: 'avg (merged)', color: '#46e5b1', fmt: 'num', values: M(name) },
+      { name: 'p95 (merged)', color: '#ffb224', fmt: 'num', values: Mp(name) },
       ...wSeries('avg', 'num', (bw) => (bw && bw[name] ? bw[name].avg : null)),
       ...wSeries('p95', 'num', (bw) => (bw && bw[name] ? bw[name].p95 : null), '5 3') ] });
   }
@@ -130,21 +129,21 @@ export function buildHtmlReport(s) {
 
   const t = rep.totals;
   const workersRows = rep.workers.map((w) => `
-    <tr><td>${htmlEsc(w.id)}</td><td>${w.error ? htmlEsc(w.error) : (w.exitCode == null ? '—' : `code ${w.exitCode}`)}</td><td>${w.finishedAt ? htmlEsc(new Date(w.finishedAt).toLocaleString('fr-FR')) : '—'}</td></tr>`).join('');
+    <tr><td>${htmlEsc(w.id)}</td><td>${w.error ? htmlEsc(w.error) : (w.exitCode == null ? '—' : `code ${w.exitCode}`)}</td><td>${w.finishedAt ? htmlEsc(new Date(w.finishedAt).toLocaleString('en-US')) : '—'}</td></tr>`).join('');
   const metricRows = metricNames.map((name) => {
     const m = rep.metrics[name];
     return `<tr><td class="mn">${htmlEsc(name)}</td><td>${fmtH(m.count, 0)}</td><td>${fmtH(m.rate, 1)}</td><td>${fmtH(m.min)}</td><td>${fmtH(m.avg)}</td><td>${fmtH(m.p70)}</td><td>${fmtH(m.p80)}</td><td>${fmtH(m.p90)}</td><td>${fmtH(m.p95)}</td><td>${fmtH(m.p99)}</td><td>${fmtH(m.max)}</td></tr>`;
   }).join('');
   const logsHtml = Object.entries(rep.logs).map(([id, lines]) => `
-    <details open><summary>${htmlEsc(id)} — ${lines.length} ligne(s)</summary><pre>${htmlEsc(lines.join('\n'))}</pre></details>`).join('');
+    <details open><summary>${htmlEsc(id)} — ${lines.length} line(s)</summary><pre>${htmlEsc(lines.join('\n'))}</pre></details>`).join('');
 
-  const genAt = new Date().toLocaleString('fr-FR');
+  const genAt = new Date().toLocaleString('en-US');
   const page = `<!doctype html>
-<html lang="fr">
+<html lang="en">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Rapport k6 — ${htmlEsc(rep.session.id)}</title>
+<title>k6 Report — ${htmlEsc(rep.session.id)}</title>
 <style>
   :root { color-scheme: dark; }
   body { margin: 0; background: #0b1017; color: #c9d4e0; font: 14px/1.5 "IBM Plex Sans", "Segoe UI", system-ui, sans-serif; }
@@ -181,28 +180,28 @@ export function buildHtmlReport(s) {
 </head>
 <body>
 <div class="wrap">
-  <h1>Rapport k6 distribué</h1>
-  <p class="sub">${htmlEsc(rep.session.id)} — ${htmlEsc(rep.session.overall)} · ${htmlEsc(String(rep.session.totalVus))} VUs · durée ${htmlEsc(String(rep.session.duration))}</p>
+  <h1>k6 distributed report</h1>
+  <p class="sub">${htmlEsc(rep.session.id)} — ${htmlEsc(rep.session.overall)} · ${htmlEsc(String(rep.session.totalVus))} VUs · duration ${htmlEsc(String(rep.session.duration))}</p>
 
-  <h2>Synthèse</h2>
+  <h2>Summary</h2>
   <div class="grid">
-    <div class="cell"><span>VUS max</span><b>${fmtH(t.vusMax, 0)}</b></div>
-    <div class="cell"><span>Requêtes HTTP</span><b>${fmtH(t.httpReqs, 0)}</b></div>
-    <div class="cell"><span>Taux d'échecs</span><b>${fmtH(t.failedPct)} %</b></div>
-    <div class="cell"><span>Données reçues</span><b>${fmtBytesH(t.dataReceived)}</b></div>
-    <div class="cell"><span>Données envoyées</span><b>${fmtBytesH(t.dataSent)}</b></div>
-    <div class="cell"><span>Itérations</span><b>${fmtH(t.iterations, 0)}</b></div>
+    <div class="cell"><span>Max VUS</span><b>${fmtH(t.vusMax, 0)}</b></div>
+    <div class="cell"><span>HTTP requests</span><b>${fmtH(t.httpReqs, 0)}</b></div>
+    <div class="cell"><span>Failure rate</span><b>${fmtH(t.failedPct)} %</b></div>
+    <div class="cell"><span>Data received</span><b>${fmtBytesH(t.dataReceived)}</b></div>
+    <div class="cell"><span>Data sent</span><b>${fmtBytesH(t.dataSent)}</b></div>
+    <div class="cell"><span>Iterations</span><b>${fmtH(t.iterations, 0)}</b></div>
     <div class="cell"><span>Checks</span><b>${fmtH(t.checksPct)} %</b></div>
   </div>
 
   <h2>Workers</h2>
   <table>
-    <thead><tr><th>Worker</th><th>Résultat</th><th>Fin</th></tr></thead>
+    <thead><tr><th>Worker</th><th>Result</th><th>End</th></tr></thead>
     <tbody>${workersRows}</tbody>
   </table>
 
-  <h2>Graphiques</h2>
-  <p class="sub">Chaque graphique porte la courbe de fusion et une courbe par worker — cochez une série pour l'afficher ou la masquer.</p>
+  <h2>Charts</h2>
+  <p class="sub">Each chart carries the merged curve and one curve per worker — check a series to show or hide it.</p>
   ${built.map((b, i) => `
   <figure class="rpt-chart">
     <figcaption>${htmlEsc(charts[i].title)}</figcaption>
@@ -210,16 +209,16 @@ export function buildHtmlReport(s) {
     ${b.svg}
   </figure>`).join('')}
 
-  <h2>Toutes les métriques</h2>
+  <h2>All metrics</h2>
   <table>
-    <thead><tr><th>Métrique</th><th>count</th><th>rate</th><th>min</th><th>avg</th><th>p70</th><th>p80</th><th>p90</th><th>p95</th><th>p99</th><th>max</th></tr></thead>
+    <thead><tr><th>Metric</th><th>count</th><th>rate</th><th>min</th><th>avg</th><th>p70</th><th>p80</th><th>p90</th><th>p95</th><th>p99</th><th>max</th></tr></thead>
     <tbody>${metricRows}</tbody>
   </table>
 
-  <h2>Logs par worker</h2>
-  ${logsHtml || '<p class="sub">Aucun log.</p>'}
+  <h2>Logs per worker</h2>
+  ${logsHtml || '<p class="sub">No logs.</p>'}
 
-  <p class="foot">Généré le ${genAt} par l'orchestrateur k6 distribué — survolez les graphiques pour lire les valeurs à l'instant t.</p>
+  <p class="foot">Generated on ${genAt} by the distributed k6 orchestrator — hover over the charts to read the values at time t.</p>
 </div>
 <div id="tip"></div>
 <script>
@@ -229,7 +228,7 @@ export function buildHtmlReport(s) {
   var iw = W - pL - pR, ih = H - pT - pB;
   var NS = 'http://www.w3.org/2000/svg';
   var F = {
-    int: function (v) { return v == null ? '—' : Math.round(v).toLocaleString('fr-FR'); },
+    int: function (v) { return v == null ? '—' : Math.round(v).toLocaleString('en-US'); },
     num: function (v) { return v == null ? '—' : Number(v).toFixed(2); },
     pct: function (v) { return v == null ? '—' : Number(v).toFixed(2) + ' %'; },
     bps: function (v) { return v == null ? '—' : (v < 1000 ? Math.round(v) + ' B/s' : v < 1e6 ? (v / 1e3).toFixed(1) + ' kB/s' : (v / 1e6).toFixed(2) + ' MB/s'); }
@@ -275,7 +274,7 @@ export function buildHtmlReport(s) {
       crs.setAttribute('x1', x);
       crs.setAttribute('x2', x);
       crs.style.display = '';
-      var html = '<span class="tt">' + new Date(times[i]).toLocaleString('fr-FR') + '</span>';
+      var html = '<span class="tt">' + new Date(times[i]).toLocaleString('en-US') + '</span>';
       d.series.forEach(function (s, si) {
         if (g.children[si] && g.children[si].style.display === 'none') return;
         html += '<br>' + s.name + ' : ' + (F[s.fmt] || F.num)(s.values[i]);

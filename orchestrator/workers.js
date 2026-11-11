@@ -1,8 +1,8 @@
-// Événements émis par les workers : logs de console k6 (stdout/stderr) et
-// fin de test.
+// Events emitted by the workers: k6 console logs (stdout/stderr) and
+// end of test.
 //
-// Les logs sont stockés par worker (jamais concaténés), plafonnés en
-// mémoire, et diffusés en direct vers la console web (ui:log).
+// Logs are stored per worker (never concatenated), capped in
+// memory, and streamed live to the web console (ui:log).
 import { MAX_LOG_LINES_PER_WORKER } from './constants.js';
 import {
   sessions,
@@ -12,7 +12,7 @@ import {
   broadcastWorkers
 } from './state.js';
 
-// Ajoute une ligne de log du worker et la diffuse vers la console
+// Add a worker log line and broadcast it to the console
 export function pushWorkerLine(io, workerId, type, text) {
   const s = getCurrentSession();
   if (!s || s.status !== 'RUNNING') return;
@@ -31,25 +31,25 @@ export function pushWorkerLine(io, workerId, type, text) {
   });
 }
 
-// Incrémente le tampon de ligne du worker puis pousse les lignes complètes
+// Increment the worker's line buffer, then push the complete lines
 export function ingestLog(io, workerId, type, output) {
   const s = getCurrentSession();
   if (!s || s.status !== 'RUNNING') return;
   let buf = (s.pending[workerId] || '') + output;
   const parts = buf.split(/[\r\n]+/);
-  // Le dernier fragment est potentiellement incomplet : on le conserve
+  // The last fragment is potentially incomplete: keep it
   s.pending[workerId] = parts.pop();
   for (const text of parts) pushWorkerLine(io, workerId, type, text);
 }
 
-// Clôt l'entrée du worker dans sa session (fin de test, erreur, déconnexion)
+// Close the worker's entry in its session (end of test, error, disconnect)
 export function markWorkerFinished(io, workerId, { exitCode = null, error = null } = {}) {
   const session = sessions.find((s) => s.workers.has(workerId));
   if (!session) return;
   const entry = session.workers.get(workerId);
-  if (entry.finishedAt) return; // déjà clôturé (évite les doublons)
+  if (entry.finishedAt) return; // already closed (avoids duplicates)
 
-  // Flush du dernier fragment de ligne non terminé de ce worker
+  // Flush this worker's last unfinished line fragment
   const rest = session.pending[workerId];
   session.pending[workerId] = '';
   if (rest) pushWorkerLine(io, workerId, 'stdout', rest);
@@ -68,5 +68,5 @@ export function markWorkerFinished(io, workerId, { exitCode = null, error = null
 
   broadcastSession(io, session);
   broadcastWorkers(io);
-  console.log(`[Orchestrateur] Worker ${workerId} : ${entry.error ? `erreur (${entry.error})` : `code de sortie ${entry.exitCode}`}`);
+  console.log(`[Orchestrator] Worker ${workerId}: ${entry.error ? `error (${entry.error})` : `exit code ${entry.exitCode}`}`);
 }

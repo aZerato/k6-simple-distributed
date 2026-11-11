@@ -1,21 +1,21 @@
-// Registre en mémoire : workers connus + sessions de test.
+// In-memory registry: known workers + test sessions.
 //
-// Source de vérité de la « session courante » (le test RUNNING) et des
-// diffusions vers la console web (ui:workers / ui:session_state).
-// Le module socket.io est passé en paramètre pour garder ce module
-// indépendant du transport.
+// Source of truth for the "current session" (the RUNNING test) and for the
+// broadcasts toward the web console (ui:workers / ui:session_state).
+// The socket.io module is passed as a parameter to keep this module
+// independent from the transport.
 import { MAX_SESSIONS } from './constants.js';
 
-// Registre pour suivre l'état de nos workers
+// Registry to track the state of our workers
 export const workersRegistry = new Map(); // workerId -> { id, socketId, status }
-export const sessions = [];               // sessions (plus récentes d'abord, plafonné à MAX_SESSIONS)
+export const sessions = [];               // sessions (newest first, capped at MAX_SESSIONS)
 let currentSession = null;
 
 export function getCurrentSession() { return currentSession; }
 
 export function setCurrentSession(session) { currentSession = session; }
 
-// Après la fin d'un test, on repique la session encore en cours (ou aucune)
+// After a test ends, re-point to the session still running (or none)
 export function resyncCurrentSession() {
   currentSession = sessions.find((s) => s.status === 'RUNNING') || null;
 }
@@ -29,14 +29,14 @@ export function createSession({ totalVus, duration }) {
     totalVus,
     duration,
     workers: new Map(),        // workerId -> { exitCode, finishedAt, error }
-    pending: {},                // workerId -> fragment de log non terminé
+    pending: {},                // workerId -> unfinished log fragment
     workerLogs: new Map(),     // workerId -> [ { t, type, text, seq } ]
-    metrics: new Map(),        // metric name -> MetricAgg (fusion de tous les workers)
+    metrics: new Map(),        // metric name -> MetricAgg (fusion of every worker)
     metricsByWorker: new Map(),// workerId -> Map(metric name -> MetricAgg)
-    vusPeak: 0,                // plus haut niveau de VUS fusionné (somme des workers)
-    rawMetrics: new Map(),     // workerId -> [ ligne JSON brute (format `--out json=` k6) ]
-    rawTruncated: false,       // le buffer brut a-t-il été tronqué (plafond mémoire) ?
-    history: [],                // snapshots par seconde
+    vusPeak: 0,                // highest fused VUS level (sum of the workers)
+    rawMetrics: new Map(),     // workerId -> [ raw JSON line (k6 `--out json=` format) ]
+    rawTruncated: false,       // has the raw buffer been truncated (memory cap)?
+    history: [],                // per-second snapshots
     seq: 0
   };
   sessions.unshift(session);
@@ -46,11 +46,11 @@ export function createSession({ totalVus, duration }) {
 }
 
 export function sessionOverallStatus(session) {
-  if (session.status === 'RUNNING') return 'EN COURS';
+  if (session.status === 'RUNNING') return 'IN PROGRESS';
   const entries = [...session.workers.values()];
-  if (entries.some((e) => e.error)) return 'INTERROMPU';
-  if (entries.some((e) => e.exitCode !== 0)) return 'ÉCHEC';
-  return 'SUCCÈS';
+  if (entries.some((e) => e.error)) return 'INTERRUPTED';
+  if (entries.some((e) => e.exitCode !== 0)) return 'FAILURE';
+  return 'SUCCESS';
 }
 
 export function vusOf(s) { return s.metrics.get('vus'); }
@@ -59,7 +59,7 @@ export function workersList() {
   return [...workersRegistry.values()].map((w) => ({ id: w.id, status: w.status }));
 }
 
-// État d'une session tel qu'envoyé à la console web (ui:session_state)
+// State of a session as sent to the web console (ui:session_state)
 export function sessionState(session) {
   return {
     id: session.id,
@@ -80,7 +80,7 @@ export function sessionState(session) {
   };
 }
 
-// Résumé compact des sessions pour le bandeau « Rapport » de la console
+// Compact summary of the sessions for the console "Report" strip
 export function sessionsSummary() {
   return sessions.map((s) => ({
     id: s.id,
@@ -97,7 +97,7 @@ export function sessionsSummary() {
   }));
 }
 
-// --- DIFFUSIONS VERS LA CONSOLE WEB ---
+// --- BROADCASTS TO THE WEB CONSOLE ---
 export function broadcastWorkers(io) {
   io.to('dashboard').emit('ui:workers', workersList());
 }
