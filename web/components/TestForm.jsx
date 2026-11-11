@@ -1,5 +1,5 @@
 'use client';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 
 const DEFAULT_SCRIPT = [
   "import http from 'k6/http';",
@@ -25,6 +25,10 @@ function fileToB64(file) {
   });
 }
 
+// Recent `.js` paths, kept in the browser to suggest them in the path input
+const SCRIPT_HISTORY_KEY = 'k6-script-path-history';
+const SCRIPT_HISTORY_MAX = 10;
+
 export default function TestForm({ formStatus, submitting, onSubmit, onStop, workers }) {
   const [scriptPath, setScriptPath] = useState('');
   const [script, setScript] = useState(DEFAULT_SCRIPT);
@@ -35,6 +39,15 @@ export default function TestForm({ formStatus, submitting, onSubmit, onStop, wor
   const [picks, setPicks] = useState({});
   // Data files (CSV, etc.) uploaded to the workers: name -> { b64, size }
   const [dataFiles, setDataFiles] = useState({});
+  // Script path history (datalist of the path input), kept in the browser
+  const [scriptHistory, setScriptHistory] = useState([]);
+
+  useEffect(() => {
+    try {
+      const raw = JSON.parse(localStorage.getItem(SCRIPT_HISTORY_KEY) || '[]');
+      if (Array.isArray(raw)) setScriptHistory(raw.filter((p) => typeof p === 'string'));
+    } catch { /* corrupted entry: start fresh */ }
+  }, []);
 
   const selected = (workers || []).filter((w) => picks[w.id] !== false);
   const fileNames = Object.keys(dataFiles);
@@ -61,8 +74,15 @@ export default function TestForm({ formStatus, submitting, onSubmit, onStop, wor
         id="test-form"
         onSubmit={(e) => {
           e.preventDefault();
+          const path = scriptPath.trim();
+          if (path) {
+            // Keep the recent .js paths (deduped, most recent first, capped)
+            const next = [path, ...scriptHistory.filter((p) => p !== path)].slice(0, SCRIPT_HISTORY_MAX);
+            setScriptHistory(next);
+            try { localStorage.setItem(SCRIPT_HISTORY_KEY, JSON.stringify(next)); } catch { /* storage unavailable */ }
+          }
           onSubmit({
-            scriptPath: scriptPath.trim(),
+            scriptPath: path,
             scriptContent: script,
             totalVus: Math.max(1, parseInt(totalVus, 10) || 1),
             duration: duration.trim() || '30s',
@@ -78,10 +98,16 @@ export default function TestForm({ formStatus, submitting, onSubmit, onStop, wor
           <input
             id="script-path"
             type="text"
+            list="script-path-history"
             value={scriptPath}
             onChange={(e) => setScriptPath(e.target.value)}
             placeholder="e.g. C:\k6\script.js (optional)"
           />
+          <datalist id="script-path-history">
+            {scriptHistory.map((p) => (
+              <option key={p} value={p} />
+            ))}
+          </datalist>
           <span className="field-hint">
             If set, this takes precedence over the code pasted below. The file is read on the orchestrator's machine.
           </span>
