@@ -42,11 +42,19 @@ Le binaire `k6` doit être accessible dans le PATH du système.
 
 Exécutez ces étapes sur l'ordinateur de l'Orchestrateur **et** sur chaque machine Worker.
 
-1. Créez un dossier pour le projet et placez-y les fichiers correspondants (`orchestrator.js` ou `worker.js`).
+1. Créez un dossier pour le projet et placez-y les dossiers correspondants (`orchestrator` ou `worker`).
 2. Installez les dépendances :
    ```bash
    npm install
    ```
+3. Générez la console web (React / Next.js, dossier `web/`) :
+   ```bash
+   cd web
+   npm install
+   npm run build
+   ```
+   L'orchestrateur sert automatiquement le build (`web/out`) ; s'il est absent,
+   il replie sur la console legacy (`orchestrator/public/`).
 
 ---
 
@@ -125,8 +133,11 @@ node \orchestrator\test\trigger.js
 
 ## 5. Console web de l'Orchestrateur
 
-Dès le démarrage, l'orchestrateur sert une console web sur **`http://<IP_ORCHESTRATEUR>:3000`**
-(dossier `orchestrator/public/`, style « dashboard k6 »). Elle permet de :
+Dès le démarrage, l'orchestrateur sert la console web sur **`http://<IP_ORCHESTRATEUR>:3000`**.
+La console est une application **React / Next.js** (dossier `web/`, découpage par
+composants — voir §6.1) : le build statique (`web/out`) est servi par Express, à la
+même origine que l'API et Socket.io ; sans build, l'orchestrateur replie sur la
+console legacy (`orchestrator/public/`). Elle permet de :
 
 * **Voir les graphiques en direct** (façon web dashboard de k6) : cartes de synthèse
   (VUS, req/s, échecs/s, checks %, itérations/s, données reçues/envoyées) avec
@@ -222,3 +233,29 @@ câbler express + socket.io et lancer l'écoute ; tout le reste est importé :
 Le worker (`worker/worker.js`) n'est pas concerné par ce découpage : il parle
 uniquement le protocole socket (`worker:ready`, `worker:log`, `worker:metrics`,
 `worker:test_finished`, …) et reste un fichier unique.
+
+### 6.1 Console web (`web/`) — React / Next.js
+
+La partie UI est découpée en **composants React** (un par panneau), avec le
+même style CSS (copie de `orchestrator/public/style.css` dans `web/app/globals.css`).
+Un seul état partagé (`hooks/useDashboard.js`) : socket `ui:*`, session affichée /
+« piquetée » / RUNNING, snapshots, séries par worker, logs, watchdog « refresh
+forcé » — les composants n'ont plus que leur rendu. Le canvas (graphiques,
+sparklines, infobulle) reste un moteur impératif sans dépendance, dans
+`lib/charts.js`.
+
+| Fichier                           | Rôle                                                                          |
+|-----------------------------------|-------------------------------------------------------------------------------|
+| `app/layout.jsx` / `app/page.jsx` | Coquille (polices, CSS global) + assemblage de la page                        |
+| `hooks/useDashboard.js`           | « Cerveau » : socket `ui:*`, sessions, rows, séries, logs, watchdog           |
+| `lib/config.js`                   | URL de l'orchestrateur (`NEXT_PUBLIC_ORCHESTRATOR_URL`) + plafonds            |
+| `lib/format.js`                   | Formatage (horodatages, nombres, octets)                                     |
+| `lib/charts.js`                   | Moteur canvas (grille, courbes, sparklines, infobulle) + defs de séries       |
+| `components/TopBar.jsx`           | Barre du haut (marque, compte de workers, LED socket)                         |
+| `components/WorkersPanel.jsx`     | Liste des workers (statut Disponible / Occupé)                               |
+| `components/TestForm.jsx`         | Lancement de test (script collé ou `scriptPath`, VUS, durée, stop)           |
+| `components/Cards.jsx`            | Cartes de synthèse + sparklines canvas                                        |
+| `components/ChartsGrid.jsx`       | 4 graphiques principaux + cases à cocher des séries (fusion + par worker)     |
+| `components/MetricExplorer.jsx`   | Explorateur de métrique : graphique avg/p95 + tableau par source              |
+| `components/LogsPanel.jsx`        | Logs par worker (onglets, auto-scroll, « Vider »)                             |
+| `components/ReportStrip.jsx`      | Bandeau Rapport : sessions, JSON brut k6, téléchargements html/json/txt/jsonl  |

@@ -1,0 +1,17 @@
+{
+  "name": "k6-orchestrator-web",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Console web de l'orchestrateur k6 distribué (React / Next.js, build statique servi par l'orchestrateur)",
+  "scripts": {
+    "dev": "next dev -p 3001",
+    "build": "next build",
+    "start": "next start -p 3001"
+  },
+  "dependencies": {
+    "next": "^15.5.29",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "socket.io-client": "^4.8.4"
+  }
+}

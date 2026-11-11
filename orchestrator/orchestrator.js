@@ -16,6 +16,7 @@
 import express from 'express';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
+import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { registerRoutes } from './routes.js';
@@ -33,8 +34,11 @@ const io = new Server(httpServer, {
 });
 
 app.use(express.json());
-// Console web de l'orchestrateur (fichiers statiques)
-app.use(express.static(path.join(__dirname, 'public')));
+// Console web : le build Next.js (web/out) s'il a été généré,
+// sinon la console legacy (public/). Mêmes origines pour HTTP + Socket.io.
+const nextOut = path.join(__dirname, '..', 'web', 'out');
+const staticDir = fs.existsSync(nextOut) ? nextOut : path.join(__dirname, 'public');
+app.use(express.static(staticDir));
 
 // Câblage : API HTTP + canal Socket.io + snapshot des métriques (1/s)
 registerRoutes(app, io);
