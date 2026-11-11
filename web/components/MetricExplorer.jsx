@@ -57,7 +57,7 @@ function MetricTable({ rows, workerIds, metricName }) {
   );
 }
 
-export default function MetricExplorer({ rows, workerIds, seriesVisible, metricName, metricNames, onMetricChange, canvasRefs, onToggle }) {
+export default function MetricExplorer({ rows, workerIds, seriesVisible, curveMode, metricName, metricNames, onMetricChange, canvasRefs, onToggle }) {
   const def = metricName ? metricDef(metricName) : null;
 
   return (
@@ -84,7 +84,7 @@ export default function MetricExplorer({ rows, workerIds, seriesVisible, metricN
                 <label className="sr" key={s.id}>
                   <input
                     type="checkbox"
-                    checked={isSeriesOn(seriesVisible, s.id)}
+                    checked={isSeriesOn(curveMode, seriesVisible, s)}
                     onChange={(e) => onToggle(s.id, e.target.checked)}
                   />
                   <i className="sw2" style={{ background: s.color }} />
