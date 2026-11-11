@@ -43,8 +43,7 @@ Le binaire `k6` doit être accessible dans le PATH du système.
 Exécutez ces étapes sur l'ordinateur de l'Orchestrateur **et** sur chaque machine Worker.
 
 1. Créez un dossier pour le projet et placez-y les fichiers correspondants (`orchestrator.js` ou `worker.js`).
-2. Créez le fichier `package.json` adapté (voir codes précédents).
-3. Installez les dépendances :
+2. Installez les dépendances :
    ```bash
    npm install
    ```
@@ -117,7 +116,7 @@ node \worker\worker.js
 ```
 
 Puis, depuis le navigateur de l'Orchestrateur, ouvrir **`http://localhost:3000`** (voir section 5) —
-ou, côté API, déclencher le test de démonstration :
+ou, via API vous pouvez déclencher le test de démonstration se trouvant ici :
 ```shell
 node \orchestrator\test\trigger.js
 ```
@@ -198,3 +197,28 @@ Les logs console de k6 continuent d'arriver via `worker:log`.
 > **Note :** un seul test est exécuté à la fois. Si une session est encore en cours
 > (par exemple après un arrêt d'urgence, tant que k6 n'a pas émis son code de sortie),
 > `POST /api/test/start` répond `409`.
+
+## 6. Structure du code de l'Orchestrateur
+
+Le code est découpé par responsabilité — « par controller / socket » — dans
+`orchestrator/`. Le point d'entrée (`orchestrator.js`, ~40 lignes) ne fait que
+câbler express + socket.io et lancer l'écoute ; tout le reste est importé :
+
+| Module          | Rôle                                                                 |
+|-----------------|----------------------------------------------------------------------|
+| `orchestrator.js`| Point d'entrée : `app` + `io` + `listen` (assemblage des modules)      |
+| `constants.js`  | Plafonds mémoire / console (sessions, logs, percentiles, JSON brut)    |
+| `utils.js`      | Formatage partagé (horodatages, octets)                               |
+| `state.js`      | Registre en mémoire : workers + sessions, source de vérité de la session courante et diffusions console |
+| `metrics.js`    | Agrégation k6 (`MetricAgg`, percentiles, brut), fusion **+ par worker**, snapshot par seconde (`ui:metrics`) |
+| `workers.js`    | Événements workers : logs k6 par worker (tampon de ligne) + clôture de fin de test |
+| `scripts.js`    | Validation du script k6 (rejet des imports de modules Node.js)         |
+| `reports/json.js`| Rapport JSON (séries + stats fusion/par worker + logs)                 |
+| `reports/txt.js`| Rapport texte (résumé + métriques par worker)                          |
+| `reports/html.js`| Rapport HTML autoporté (SVG + JS embarqué : cases à cocher, infobulle)  |
+| `routes.js`     | API HTTP (controllers) : `registerRoutes(app, io)`                   |
+| `sockets.js`    | Canal Socket.io : `registerSockets(io)` — workers + console web        |
+
+Le worker (`worker/worker.js`) n'est pas concerné par ce découpage : il parle
+uniquement le protocole socket (`worker:ready`, `worker:log`, `worker:metrics`,
+`worker:test_finished`, …) et reste un fichier unique.
