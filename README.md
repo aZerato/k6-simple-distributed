@@ -1,68 +1,25 @@
-# Multi-OS Setup and Run Guide
+# k6-simple-distributed
 
-This guide explains how to install, configure, and run the k6 **Orchestrator** and **Workers (Agents)** on **Windows**, **Linux** and **macOS**.
+A streamlined k6 test orchestrator with simplified workers designed for resource-constrained environments.
 
----
+No kubernetes needed, only nodejs.
+You can run your tests via a web ui or via an API.
 
-## 1. Global Prerequisites (on every machine)
+![UI](./docs/img/ui.png)
 
-### 1.1 Node.js
-The project requires **Node.js (version 18 or higher)**.
-* **Windows & macOS:** Download the official installer from [nodejs.org](https://nodejs.org/).
-* **Linux (Ubuntu/Debian):**
-  ```bash
-  sudo apt update && sudo apt install -y nodejs npm
-  ```
+![UI streamed log from each worker](./docs/img/ui-realtime-log.png)
 
-### 1.2 Grafana k6 (required on Worker machines only)
-The `k6` binary must be available on the system PATH.
+![HTML Report](./docs/img/report.png)
 
-* **Windows:**
-  * Via [Scoop](https://scoop.sh/): `scoop install k6`
-  * Via [Winget](https://learn.microsoft.com/en-us/windows/package-manager/winget/): `winget install Grafana.k6`
-  * Or download the `.msi` installer from the [official k6 GitHub](https://github.com/grafana/k6/releases).
+![HTML Report graph](./docs/img/report-graph.png)
 
-* **Linux (Ubuntu/Debian):**
-  ```bash
-  sudo gpg -k
-  sudo gpg --no-default-keyring --keyring /usr/share/keyrings/k6-archive-keyring.gpg --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys C5AD17C747E3415A3642D57D77C6C491D6AC1D69
-  echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main" | sudo tee /etc/apt/sources.list.d/k6.list
-  sudo apt update
-  sudo apt install k6
-  ```
+![HTML Report metrics](./docs/img/report-metrics.png)
 
-* **macOS:**
-  ```bash
-  brew install k6
-  ```
-
----
-
-## 2. Project Installation
-
-Run these steps on the Orchestrator's computer **and** on every Worker machine.
-
-1. Create a folder for the project and place the corresponding folders inside it, depending on the target machine (`orchestrator` or `worker`).
-2. Install the dependencies:
-   ```bash
-   npm install
-   ```
-3. For the orchestrator, build the web console (React / Next.js, `web/` folder):
-   ```bash
-   cd web
-   npm install
-   npm run build
-   ```
-   The orchestrator serves the build (`web/out`); if it is missing, a warning
-   is printed at startup (the console would be empty).
-
----
-
-## 3. Run Commands per OS
+## Run Commands per OS
 
 To set the environment variables (`ORCHESTRATOR_URL`, `WORKER_ID`, `PORT`), the syntax varies with the operating system and the terminal used.
 
-### 3.1 Running on Windows
+### Running on Windows
 
 #### Option A: via PowerShell (recommended on Windows)
 In PowerShell, the environment variables must be defined on separate lines before running the script:
@@ -95,7 +52,7 @@ node worker.js
 
 ---
 
-### 3.2 Running on Linux and macOS
+### Running on Linux and macOS
 
 On Unix-like systems (Bash / Zsh) you can declare the environment variables on the same line, just before the Node command.
 
@@ -111,7 +68,7 @@ On Unix-like systems (Bash / Zsh) you can declare the environment variables on t
 
 ---
 
-### 4. Test run
+### Test run
 
 * **For the Orchestrator:**
 ```shell
@@ -131,7 +88,7 @@ node \orchestrator\test\trigger.js
 
 ---
 
-## 5. Orchestrator Web Console
+## Orchestrator Web Console
 
 At startup, the orchestrator serves the web console on **`http://<IP_ORCHESTRATEUR>:3000`**.
 The console is a **React / Next.js** application (`web/` folder, split per
@@ -207,54 +164,3 @@ k6 console logs keep arriving via `worker:log`.
 > **Note:** only one test runs at a time. If a session is still in progress
 > (e.g. after an emergency stop, as long as k6 has not emitted its exit code),
 > `POST /api/test/start` answers `409`.
-
-## 6. Orchestrator Code Structure
-
-The code is split by responsibility — "per controller / socket" — in
-`orchestrator/`. The entry point (`orchestrator.js`, ~40 lines) only
-wires express + socket.io and starts listening; everything else is imported:
-
-| Module          | Role                                                                 |
-|-----------------|----------------------------------------------------------------------|
-| `orchestrator.js`| Entry point: `app` + `io` + `listen` (module assembly)      |
-| `constants.js`  | Memory / console caps (sessions, logs, percentiles, raw JSON)    |
-| `utils.js`      | Shared formatting (timestamps, bytes)                               |
-| `state.js`      | In-memory registry: workers + sessions, source of truth for the current session and console broadcasts |
-| `metrics.js`    | k6 aggregation (`MetricAgg`, percentiles, raw), fusion **+ per worker**, per-second snapshot (`ui:metrics`) |
-| `workers.js`    | Worker events: per-worker k6 logs (line buffer) + end-of-test close-out |
-| `scripts.js`    | k6 script validation (rejects Node.js module imports)         |
-| `reports/json.js`| JSON report (series + fusion/per-worker stats + logs)                 |
-| `reports/txt.js`| Text report (summary + per-worker metrics)                          |
-| `reports/html.js`| Self-contained HTML report (SVG + embedded JS: checkboxes, tooltip)  |
-| `routes.js`     | HTTP API (controllers): `registerRoutes(app, io)`                   |
-| `sockets.js`    | Socket.io channel: `registerSockets(io)` — workers + web console        |
-
-The worker (`worker/worker.js`) is not part of this split: it only speaks
-the socket protocol (`worker:ready`, `worker:log`, `worker:metrics`,
-`worker:test_finished`, …) and remains a single file.
-
-### 6.1 Web Console (`web/`) — React / Next.js
-
-The UI part is split into **React components** (one per panel), with the
-same CSS style (moved into `web/app/globals.css`).
-A single shared state (`hooks/useDashboard.js`): socket `ui:*`, displayed session /
-"pinned" / RUNNING, snapshots, per-worker series, logs, "forced
-refresh" watchdog — the components only keep their rendering. The canvas (charts,
-sparklines, tooltip) stays a dependency-free imperative engine, in
-`lib/charts.js`.
-
-| File                           | Role                                                                          |
-|--------------------------------|------------------------------------------------------------------------------|
-| `app/layout.jsx` / `app/page.jsx` | Shell (fonts, global CSS) + page assembly                        |
-| `hooks/useDashboard.js`           | "Brain": socket `ui:*`, sessions, rows, series, logs, watchdog           |
-| `lib/config.js`                   | Orchestrator URL (`NEXT_PUBLIC_ORCHESTRATOR_URL`) + caps            |
-| `lib/format.js`                   | Formatting (timestamps, numbers, bytes)                                     |
-| `lib/charts.js`                   | Canvas engine (grid, curves, sparklines, tooltip) + series defs       |
-| `components/TopBar.jsx`           | Top bar (brand, worker count, socket LED)                         |
-| `components/WorkersPanel.jsx`     | Worker list (status Available / Busy)                               |
-| `components/TestForm.jsx`         | Test launch (pasted script or `scriptPath`, VUS, duration, stop)           |
-| `components/Cards.jsx`            | Summary cards + canvas sparklines                                        |
-| `components/ChartsGrid.jsx`       | 4 main charts + series checkboxes (fusion + per worker)     |
-| `components/MetricExplorer.jsx`   | Metric explorer: avg/p95 chart + per-source table              |
-| `components/LogsPanel.jsx`        | Per-worker logs (tabs, auto-scroll, "Clear")                             |
-| `components/ReportStrip.jsx`      | Report strip: sessions, raw k6 JSON, html/json/txt/jsonl downloads  |
