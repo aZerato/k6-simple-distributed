@@ -34,11 +34,17 @@ const io = new Server(httpServer, {
 });
 
 app.use(express.json());
-// Console web : le build Next.js (web/out) s'il a été généré,
-// sinon la console legacy (public/). Mêmes origines pour HTTP + Socket.io.
+// Console web : le build Next.js (web/out), à la même origine que l'API et
+// Socket.io. `web/out` est un build statique généré par `cd web && npm run build`.
 const nextOut = path.join(__dirname, '..', 'web', 'out');
-const staticDir = fs.existsSync(nextOut) ? nextOut : path.join(__dirname, 'public');
-app.use(express.static(staticDir));
+app.use(express.static(nextOut));
+if (!fs.existsSync(nextOut)) {
+  console.warn(
+    '\x1b[33m' +
+      '[Orchestrateur] Attention : le build de la console web (web/out) est absent.\n' +
+      '          Générez-le avec `cd web && npm run build`, sinon la console est vide.\x1b[0m'
+  );
+}
 
 // Câblage : API HTTP + canal Socket.io + snapshot des métriques (1/s)
 registerRoutes(app, io);

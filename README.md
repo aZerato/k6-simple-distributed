@@ -53,8 +53,8 @@ Exécutez ces étapes sur l'ordinateur de l'Orchestrateur **et** sur chaque mach
    npm install
    npm run build
    ```
-   L'orchestrateur sert automatiquement le build (`web/out`) ; s'il est absent,
-   il replie sur la console legacy (`orchestrator/public/`).
+   L'orchestrateur sert le build (`web/out`) ; s'il est absent, un avertissement
+   s'affiche au démarrage (la console serait vide).
 
 ---
 
@@ -136,8 +136,7 @@ node \orchestrator\test\trigger.js
 Dès le démarrage, l'orchestrateur sert la console web sur **`http://<IP_ORCHESTRATEUR>:3000`**.
 La console est une application **React / Next.js** (dossier `web/`, découpage par
 composants — voir §6.1) : le build statique (`web/out`) est servi par Express, à la
-même origine que l'API et Socket.io ; sans build, l'orchestrateur replie sur la
-console legacy (`orchestrator/public/`). Elle permet de :
+même origine que l'API et Socket.io. Elle permet de :
 
 * **Voir les graphiques en direct** (façon web dashboard de k6) : cartes de synthèse
   (VUS, req/s, échecs/s, checks %, itérations/s, données reçues/envoyées) avec
@@ -237,7 +236,7 @@ uniquement le protocole socket (`worker:ready`, `worker:log`, `worker:metrics`,
 ### 6.1 Console web (`web/`) — React / Next.js
 
 La partie UI est découpée en **composants React** (un par panneau), avec le
-même style CSS (copie de `orchestrator/public/style.css` dans `web/app/globals.css`).
+même style CSS (porté dans `web/app/globals.css`).
 Un seul état partagé (`hooks/useDashboard.js`) : socket `ui:*`, session affichée /
 « piquetée » / RUNNING, snapshots, séries par worker, logs, watchdog « refresh
 forcé » — les composants n'ont plus que leur rendu. Le canvas (graphiques,
