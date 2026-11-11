@@ -109,7 +109,9 @@ the same origin as the API and Socket.io. It lets you:
   Each chart carries the **fusion curve** (all workers) **and one curve
   per worker** (dashed): **checkboxes** under each chart
   let you show/hide every series; hovering shows the value of every
-  visible series at time t.
+  visible series at time t. A global **Curves** control
+   (Merged / Per worker / All, default Merged) presets which curves are
+   shown — a manual checkbox still wins per series.
 * **Explore metrics**: a selector lists every metric produced by
   k6 (e.g. `http_req_duration`, `http_req_failed`…); for each one, an
   avg + p95 chart (fusion **and an avg/p95 curve per worker**) and a
@@ -117,9 +119,11 @@ the same origin as the API and Socket.io. It lets you:
   per source** (fusion + one per worker).
 * **Inspect per-worker logs**: every agent has its own tab (no
   concatenation), with millisecond timestamps and `STDOUT`/`STDERR` type.
-* **Start a test** (k6 script **pasted** or **pointed to by a `.js` path**, total VUS,
-  duration) and **stop** a test as an emergency stop, directly from the interface. The path is
-  read on the orchestrator's machine, then injected as-is to the workers.
+* **Start a test** (k6 script **pasted** or **pointed to by a `.js` path**,
+  **targeted workers** — per-worker checkboxes, default all, *All / None*,
+  total VUS, duration) and **stop** a test as an emergency stop, directly
+  from the interface. The path is read on the orchestrator's machine, then
+  injected as-is to the targeted workers.
 * **Download the session report**:
   * **`.html`** — a **self-contained** page: interactive SVG charts (with a tooltip showing
     the value at time t on hover) for the main series **and every metric**
@@ -166,7 +170,7 @@ k6 console logs keep arriving via `worker:log`.
 | GET    | `/api/test/report?format=html`| Self-contained HTML report (SVG charts + every metric)       |
 | GET    | `/api/test/report?session=`  | Report of a specific session (id `sess-…`)               |
 | GET    | `/api/raw-metrics`           | Raw k6 JSON output of a worker (`?session=&worker=`, JSON Lines) |
-| POST   | `/api/test/start`            | Start a distributed test (409 if a test is already running)   |
+| POST   | `/api/test/start`            | Start a distributed test (optional `workerIds`; 409 if a test is already running) |
 | POST   | `/api/test/stop`             | Emergency stop of all tests                                  |
 
 > **Note:** only one test runs at a time. If a session is still in progress
