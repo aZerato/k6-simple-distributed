@@ -101,9 +101,10 @@ To smoke-test the whole orchestrator API (worker selection + start/stop), run
 the ready-to-run E2E fixtures: `node orchestrator/test/e2e/run.js` (see
 `orchestrator/test/e2e/README.md` for what each case covers).
 
-To run a **named scenario** end to end — pick an id, launch it via the API, wait
-for it to finish, then archive `report.json` + `report.html` + a `manifest.md`
-under `tmp/<id>_<name>_<timestamp>/` — use the scenario runner:
+To run a **named scenario** end to end — pick an id, launch it via the API,
+follow every selected worker's live k6 logs on the console, wait for it to
+finish, then archive `report.json` + `report.html` + a `manifest.md` under
+`tmp/<id>_<name>_<timestamp>/` — use the scenario runner:
 ```shell
 node orchestrator/test/scenario-runner.js            # interactive (prompt for an id)
 node orchestrator/test/scenario-runner.js --id 2     # non-interactive
@@ -114,7 +115,9 @@ its load profile in `options` (constant-vus: `vus` + `duration`, or ramping-vus:
 and passed as `__ENV` vars, e.g. `CSV_FILE_PATH`), and the script it targets; the
 runner sends the profile as JSON to the API (k6 v2 ignores the script's `options`
 — the profile is CLI-driven) and archives `report.json` + `report.html` +
-`manifest.md`.
+`manifest.md`. While the test runs, it joins the orchestrator's dashboard socket
+room (the plain web-console profile, no `workerId`) and prints each selected
+worker's k6 stdout/stderr live, line by line.
 
 ---
 

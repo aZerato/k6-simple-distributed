@@ -7,9 +7,9 @@
       "executor": "ramping-vus",
       "startVUs": 0,
       "stages": [
-        { "duration": "2m", "target": 90 },
-        { "duration": "5m", "target": 100 },
-        { "duration": "1m", "target": 0 }
+        { "duration": "20s", "target": 90 },
+        { "duration": "50s", "target": 100 },
+        { "duration": "10s", "target": 0 }
       ]
     }
   },
@@ -20,7 +20,7 @@
     "options": {
       "executor": "constant-vus",
       "vus": 50,
-      "duration": "5m"
+      "duration": "50s"
     }
   },
   {
@@ -30,7 +30,7 @@
     "options": {
       "executor": "constant-vus",
       "vus": 50,
-      "duration": "2m"
+      "duration": "1m"
     },
     "env": {
       "CSV_FILE_PATH": "./orchestrator/test/data.csv"
@@ -44,9 +44,9 @@
       "executor": "ramping-vus",
       "startVUs": 0,
       "stages": [
-        { "duration": "2m", "target": 50 },
-        { "duration": "5m", "target": 90 },
-        { "duration": "1m", "target": 0 }
+        { "duration": "20s", "target": 50 },
+        { "duration": "50s", "target": 90 },
+        { "duration": "10s", "target": 0 }
       ]
     },
     "env": {

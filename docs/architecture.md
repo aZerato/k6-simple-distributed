@@ -84,6 +84,9 @@ one script runs against different data files; the scenario runner
 scenario's data files and passes their names as `__ENV` variables. The same
 runner sends the scenario's load profile as JSON to the API — in k6 v2 the
 profile is CLI-only (see §4), so no `options` are injected into the script.
+While the test runs, the runner also joins the orchestrator's dashboard socket
+room (the plain web-console profile, no `workerId`) and prints each selected
+worker's k6 stdout/stderr live on the console, line by line.
 
 ---
 

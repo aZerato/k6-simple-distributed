@@ -1,5 +1,6 @@
 // Scenario runner — launches a k6 scenario from scenarios.tests.json through the
-// orchestrator API, waits for it to finish, retrieves the reports, and archives
+// orchestrator API, streams the workers' live k6 logs on the console, waits for
+// the test to finish, retrieves the reports, and archives
 // (report.json + report.html + manifest.md) under <project root>/tmp/<id>_<name>_<timestamp>/.
 //
 // The scenario `options` (the load profile) is passed as JSON to the API,
@@ -12,13 +13,14 @@
 // Usage:
 //   node orchestrator/test/scenario-runner.js                 # interactive (prompt for an id)
 //   node orchestrator/test/scenario-runner.js --id 2          # non-interactive
-//   node orchestrator/test/scenario-runner.js --id 2 --dry-run# print the request, no POST
+//   node orchestrator/test/scenario-runner.js --id 2 --dry-run # print the request, no POST
 //   ORCHESTRATOR_URL=http://host:3000 node orchestrator/test/scenario-runner.js
 
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import readline from 'node:readline/promises';
+import { io as connectSocket } from 'socket.io-client';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '../..');          // project root
@@ -50,6 +52,25 @@ function timestamp() {
   return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
 }
 async function getJson(url) { return (await fetch(url)).json(); }
+
+// --- Live k6 worker logs ---
+// The orchestrator relays every worker's k6 stdout/stderr to the "dashboard"
+// room as `ui:log` (the same channel the web console uses). We join that room
+// as a plain web console — no `workerId` in the handshake — and print, line by
+// line, the logs of the session we started.
+let followSessionId = null;
+function connectLogSocket() {
+  const socket = connectSocket(base);
+  let warned = false;
+  socket.on('ui:log', (e) => {
+    if (e.session !== followSessionId) return;
+    console.log(`  [worker ${e.workerId}${e.type === 'stderr' ? ' | STDERR' : ''}] ${e.text}`);
+  });
+  socket.on('connect_error', (err) => {
+    if (!warned) { warned = true; console.warn(`Live worker logs unavailable (${err.message}).`); }
+  });
+  return socket;
+}
 
 // Build the /api/test/start request from a scenario.
 // The load profile is passed as JSON (k6 v2 ignores the script's `options`):
@@ -106,7 +127,6 @@ async function waitForFinish(sessionId, timeoutMs) {
       console.log(`Finished: ${s.overall}`);
       return s;
     }
-    process.stdout.write('.');
     await new Promise((r) => setTimeout(r, 3000));
   }
   throw new Error(`Timed out waiting for the test to finish (${(timeoutMs / 1000).toFixed(0)}s).`);
@@ -186,6 +206,7 @@ async function main() {
   }
 
   // --- start ---
+  const logSocket = connectLogSocket(); // live k6 logs from the workers
   const res = await fetch(`${base}/api/test/start`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -200,18 +221,22 @@ async function main() {
   });
   const start = await res.json().catch(() => ({}));
   if (!res.ok || !start.sessionId) {
+    logSocket.disconnect();
     console.error(`Start failed (HTTP ${res.status}): ${start.error || JSON.stringify(start)}`);
     process.exitCode = 1;
     return;
   }
+  followSessionId = start.sessionId; // the socket now prints only our session's lines
   const startedAt = new Date();
   console.log(`Test started — session ${start.sessionId} — workers: ${start.workerIds.join(', ')}`);
+  console.log('Live worker logs (k6 stdout/stderr, relayed by the orchestrator):');
 
   // --- wait for completion ---
   const expectedSecs = scenario.options && scenario.options.executor === 'constant-vus'
     ? parseDurationToSeconds(scenario.options.duration)
     : (scenario.options.stages || []).reduce((a, s) => a + parseDurationToSeconds(s.duration), 0);
   await waitForFinish(start.sessionId, (expectedSecs * 1.5 + 60) * 1000);
+  logSocket.disconnect(); // no more live logs needed
 
   // --- retrieve the report ---
   const reportRes = await fetch(`${base}/api/test/report?session=${start.sessionId}`);

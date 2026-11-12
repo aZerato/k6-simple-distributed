@@ -11,8 +11,11 @@ const WORKER_ID = process.env.WORKER_ID || `worker-${Math.random().toString(36).
 const HTTP_PORT = process.env.PORT || 4000;
 // Working directory of this worker instance for the ephemeral test files
 // (k6 script, uploaded data files, raw metrics output). Every received test
-// gets its own sub-directory (`test-<timestamp>`) inside it: created when
-// the test starts, deleted when it ends. Default: the OS temp directory.
+// gets its own sub-directory (`test-<timestamp>-<pid>`) inside it: created
+// when the test starts, deleted when it ends. The pid suffix keeps two
+// worker instances from colliding on the same directory when a test reaches
+// them in the same millisecond (shared file = corrupted metrics). Default:
+// the OS temp directory.
 const WORKER_TMP_DIR = process.env.WORKER_TMP_DIR ? path.resolve(process.env.WORKER_TMP_DIR) : os.tmpdir();
 
 // Raw k6 metrics file of the current test (`--out json=`): re-read line by
@@ -126,7 +129,7 @@ socket.on('orchestrator:start_test', (payload) => {
   //    metrics output. Deleted (recursively) at the end of the test.
   let testDir;
   try {
-    testDir = path.join(WORKER_TMP_DIR, `test-${Date.now()}`);
+    testDir = path.join(WORKER_TMP_DIR, `test-${Date.now()}-${process.pid}`);
     fs.mkdirSync(testDir, { recursive: true });
   } catch (err) {
     console.error('[Worker] Cannot create the test working directory', err);
