@@ -36,8 +36,8 @@ The system is based on an agent model continuously connected to the orchestrator
 ## 2. Test Lifecycle (WebSocket Flow)
 
 1. **Connection & registration:** At startup, the Node.js worker connects to the orchestrator (Socket.io, auth `{ workerId }`) and announces itself with `worker:ready` (`{ status }`); the link is self-healing (infinite reconnection, 2 s delay).
-2. **Test order (`orchestrator:start_test`):** The orchestrator sends each **targeted worker** a JSON payload `{ scriptContent, vus, duration, envVariables, attachments }` — the total VUS are distributed **only across the targeted workers** (see §2.1), and `attachments` carries the uploaded data files (see §2.2).
-3. **Secure execution:** The worker writes the JS script — and the uploaded data files, when any — into its tmp directory (next to each other, so relative paths in the script resolve like a local run), sanitizes the arguments, and launches k6 in isolation (`{ shell: false }`), then announces `worker:status_changed` (`BUSY`). A refusal (already busy, missing script, invalid data file) is answered with `worker:error`.
+2. **Test order (`orchestrator:start_test`):** The orchestrator sends each **targeted worker** a JSON payload `{ scriptContent, vus, duration, envVariables, attachments }` — the payload carries the **load profile** tailored to that worker: `vus` + `duration` (constant-vus) or `startVUs` + `stages` (ramping-vus); the VUS are distributed **only across the targeted workers** (see §2.1), and `attachments` carries the uploaded data files (see §2.2).
+3. **Secure execution:** The worker creates a **per-test working directory** — `test-<timestamp>-<pid>/` inside its ephemeral files directory (`WORKER_TMP_DIR` env var, default: the OS temp dir; the `<pid>` suffix keeps two worker instances from sharing a directory on same-millisecond starts) — and writes the JS script, the uploaded data files, when any, and the raw metrics output there (next to each other, so relative paths in the script resolve like a local run), sanitizes the arguments, and launches k6 in isolation (`{ shell: false }`), then announces `worker:status_changed` (`BUSY`). The whole directory is deleted at the end of the test. A refusal (already busy, missing script, invalid data file) is answered with `worker:error`.
 4. **Real-time upload (`worker:log`):** Every `stdout`/`stderr` chunk produced by k6 is pushed over the WebSocket to the orchestrator for live display.
 5. **Raw metrics (`worker:metrics`):** In parallel, k6 writes its data points to an ephemeral file (`--out json=`), which the worker re-reads line by line and batches to the orchestrator (see §5).
 6. **Emergency stop (`orchestrator:stop_test`):** The orchestrator can interrupt the test at any time; the worker sends `SIGINT` to the k6 process.
@@ -51,9 +51,10 @@ The system is based on an agent model continuously connected to the orchestrator
 * unknown worker → `400`, worker not available → `422`, empty selection → `422`.
 
 The VUS are fairly distributed **only across the targeted workers** (the
-first one receives the remainder of the division); a worker that would
-receive 0 VU is simply not targeted, and if no worker can be targeted the
-request answers `422`. The response carries the selection back
+first one receives the remainder of the division); for a ramping-vus profile
+the same split is applied to `startVUs` and to the `target` of every stage.
+A worker that would receive 0 VU at its peak is simply not targeted, and if
+no worker can be targeted the request answers `422`. The response carries the selection back
 (`workersCibles` + `workerIds`). In the web console, each worker has a
 checkbox (default: all) with *All / None* shortcuts, and "Start" is
 disabled when none is selected.
@@ -71,11 +72,21 @@ orchestrator's disk):
 * names are sanitized on both sides (no path separators, no `.` / `..`, no
   empty name) — an invalid name answers `400`;
 * the orchestrator forwards the files in the `start_test` payload; each worker
-  writes them **next to the ephemeral script** (in the worker's tmp dir) and
-  deletes them at the end of the test.
+  writes them **next to the ephemeral script** (in its per-test working
+  directory, see §2 step 3) and deletes the whole directory at the end of the
+  test.
 
 Relative paths in the script therefore behave exactly like a local `k6 run`:
-upload `data.csv` and keep `open('./data.csv')` unchanged.
+upload `data.csv` and keep `open('./data.csv')` unchanged. A script can also
+take the file name from the environment — e.g. `open(__ENV.CSV_FILE_PATH)` — so
+one script runs against different data files; the scenario runner
+(`orchestrator/test/scenario-runner.js`) does exactly that: it uploads each
+scenario's data files and passes their names as `__ENV` variables. The same
+runner sends the scenario's load profile as JSON to the API — in k6 v2 the
+profile is CLI-only (see §4), so no `options` are injected into the script.
+While the test runs, the runner also joins the orchestrator's dashboard socket
+room (the plain web-console profile, no `workerId`) and prints each selected
+worker's k6 stdout/stderr live on the console, line by line.
 
 ---
 
@@ -85,7 +96,7 @@ To forbid the execution of malicious system commands (e.g. `rm -rf /` or `curl h
 
 * **No intermediate Shell:** The k6 process is instantiated via `child_process.spawn('k6', [...])` with the `{ shell: false }` option. This prevents the injection of command operators such as `;`, `&&`, or `|`.
 * **Argument sanitization:** The arguments passed to k6 (such as the duration or the number of VUs) are explicitly cast (e.g. `parseInt()`) or validated by a strict Regex before being injected into the command.
-* **Ephemeral JS file:** The received JavaScript script is written as-is into a directory dedicated to k6. k6 acting as a JavaScript sandbox (with no access to the host system's native Node.js APIs such as `fs` or `child_process`), the script cannot compromise the worker's machine.
+* **Ephemeral JS file:** The received JavaScript script is written as-is into the worker's per-test working directory (`WORKER_TMP_DIR`, default: the OS temp dir). k6 acting as a JavaScript sandbox (with no access to the host system's native Node.js APIs such as `fs` or `child_process`), the script cannot compromise the worker's machine.
 
 ---
 
@@ -125,6 +136,11 @@ k6Process.on('close', (code) => {
   socket.emit('worker:test_finished', { exitCode: code });
 });
 ```
+
+> **k6 v2:** the load profile is **CLI-only** — the script's `options` are
+> ignored. The worker builds `--vus <n> --duration <d>` for a constant-vus
+> profile, or `--vus <startVUs> --stage <d>:<t> …` for a ramping-vus one
+> (one `--stage` per stage, in order).
 
 ---
 

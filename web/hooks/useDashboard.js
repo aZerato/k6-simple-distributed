@@ -378,6 +378,9 @@ export function useDashboard() {
         const i = chartIndexFromX(canvas, e.clientX - rect.left, n);
         hoverRef.current = i >= 0 ? { redraw, index: i } : null;
         if (i < 0) { hideChartTip(tipEl); return; }
+        // Draw the marker (vertical line + point) right away: it must not wait
+        // for the next live redraw, which does not run once the test is over.
+        redraw(i);
         const r = rowsRef.current[i];
         // Value of ALL visible series at time t (merged + workers)
         const html = `<span class="tt">${timeLabel(r.t)}</span>` +
@@ -387,6 +390,7 @@ export function useDashboard() {
       canvas.addEventListener('mouseleave', () => {
         hoverRef.current = null;
         hideChartTip(tipEl);
+        redraw(-1); // erase the marker
       });
     };
     for (const c of CHART_DEFS) attach(c.key, () => c);
@@ -494,6 +498,7 @@ export function useDashboard() {
 
     // Snapshots + drawing
     rowsRef,
+    rowsRev,
     drawAll,
     canvasRefs,
     tipRef,

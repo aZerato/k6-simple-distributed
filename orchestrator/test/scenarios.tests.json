@@ -1,0 +1,56 @@
+[
+  {
+    "id": "1",
+    "name": "./orchestrator/test/basic.test.js",
+    "scenario": "Description of the scenario 1",
+    "options": {
+      "executor": "ramping-vus",
+      "startVUs": 0,
+      "stages": [
+        { "duration": "20s", "target": 90 },
+        { "duration": "50s", "target": 100 },
+        { "duration": "10s", "target": 0 }
+      ]
+    }
+  },
+  {
+    "id": "2",
+    "name": "./orchestrator/test/basic.test.js",
+    "scenario": "Description of the scenario 2",
+    "options": {
+      "executor": "constant-vus",
+      "vus": 50,
+      "duration": "50s"
+    }
+  },
+  {
+    "id": "3",
+    "name": "./orchestrator/test/csv.test.js",
+    "scenario": "Description of the scenario 3",
+    "options": {
+      "executor": "constant-vus",
+      "vus": 50,
+      "duration": "1m"
+    },
+    "env": {
+      "CSV_FILE_PATH": "./orchestrator/test/data.csv"
+    }
+  },
+  {
+    "id": "4",
+    "name": "./orchestrator/test/csv.test.js",
+    "scenario": "Description of the scenario 4",
+    "options": {
+      "executor": "ramping-vus",
+      "startVUs": 0,
+      "stages": [
+        { "duration": "20s", "target": 50 },
+        { "duration": "50s", "target": 90 },
+        { "duration": "10s", "target": 0 }
+      ]
+    },
+    "env": {
+      "CSV_FILE_PATH": "./orchestrator/test/data2.csv"
+    }
+  }
+]

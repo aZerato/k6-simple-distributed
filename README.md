@@ -25,7 +25,7 @@ Read the [guide](./docs/setup.md)
 
 ## Run Commands per OS
 
-To set the environment variables (`ORCHESTRATOR_URL`, `WORKER_ID`, `PORT`), the syntax varies with the operating system and the terminal used.
+To set the environment variables (`ORCHESTRATOR_URL`, `WORKER_ID`, `PORT`, and optionally `WORKER_TMP_DIR` — the working directory of a worker's ephemeral test files, default: the OS temp dir), the syntax varies with the operating system and the terminal used.
 
 ### Running on Windows
 
@@ -42,6 +42,7 @@ In PowerShell, the environment variables must be defined on separate lines befor
   $env:ORCHESTRATOR_URL="http://<IP_ORCHESTRATEUR>:3000"
   $env:WORKER_ID="worker-windows-01"
   $env:PORT="4000"
+  # $env:WORKER_TMP_DIR="D:\k6-worker-tmp"   # optional: test working directory (default: OS temp dir)
   node worker.js
   ```
 
@@ -55,6 +56,7 @@ node orchestrator.js
 set ORCHESTRATOR_URL=http://<IP_ORCHESTRATEUR>:3000
 set WORKER_ID=worker-windows-01
 set PORT=4000
+:: set WORKER_TMP_DIR=D:\k6-worker-tmp   (optional: test working directory, default: OS temp dir)
 node worker.js
 ```
 
@@ -71,6 +73,7 @@ On Unix-like systems (Bash / Zsh) you can declare the environment variables on t
 
 * **For a Worker (Agent):**
   ```bash
+  # Optional: WORKER_TMP_DIR=/tmp/k6-worker-tmp — test working directory (default: OS temp dir)
   ORCHESTRATOR_URL="http://<IP_ORCHESTRATEUR>:3000" WORKER_ID="worker-linux-01" PORT=4000 node worker.js
   ```
 
@@ -97,6 +100,24 @@ node \orchestrator\test\trigger.api.js
 To smoke-test the whole orchestrator API (worker selection + start/stop), run
 the ready-to-run E2E fixtures: `node orchestrator/test/e2e/run.js` (see
 `orchestrator/test/e2e/README.md` for what each case covers).
+
+To run a **named scenario** end to end — pick an id, launch it via the API,
+follow every selected worker's live k6 logs on the console, wait for it to
+finish, then archive `report.json` + `report.html` + a `manifest.md` under
+`tmp/<id>_<name>_<timestamp>/` — use the scenario runner:
+```shell
+node orchestrator/test/scenario-runner.js            # interactive (prompt for an id)
+node orchestrator/test/scenario-runner.js --id 2     # non-interactive
+```
+Scenarios live in `orchestrator/test/scenarios.tests.json`. Each scenario carries
+its load profile in `options` (constant-vus: `vus` + `duration`, or ramping-vus:
+`startVUs` + `stages`), an optional `env` (data files are uploaded to the workers
+and passed as `__ENV` vars, e.g. `CSV_FILE_PATH`), and the script it targets; the
+runner sends the profile as JSON to the API (k6 v2 ignores the script's `options`
+— the profile is CLI-driven) and archives `report.json` + `report.html` +
+`manifest.md`. While the test runs, it joins the orchestrator's dashboard socket
+room (the plain web-console profile, no `workerId`) and prints each selected
+worker's k6 stdout/stderr live, line by line.
 
 ---
 
@@ -137,7 +158,8 @@ the same origin as the API and Socket.io. It lets you:
     (avg + p95), with the fusion curve **and one curve per worker** — checkboxes
     per chart to show/hide every series. Summary,
     **all-metrics** table (count, rate, min, avg, p70/p80/p90/p95/p99, max), and
-    per-worker logs. Opens in a browser, no server required.
+    per-worker logs, and a footer with the project's GitHub link.
+    Opens in a browser, no server required.
   * **`.json`** — the full report: totals (requests, failed %, data, checks),
     final statistics for every metric (percentiles included), the
     per-second timestamped series (reconstructable as charts, with the **per

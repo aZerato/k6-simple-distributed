@@ -90,6 +90,17 @@ export default function Page() {
           />
         </section>
       </main>
+      <footer className="console-foot">
+        <span>k6 simple distributed</span>
+        <span className="qsep">·</span>
+        <a
+          href="https://github.com/aZerato/k6-simple-distributed"
+          target="_blank"
+          rel="noreferrer"
+        >
+          github.com/aZerato/k6-simple-distributed
+        </a>
+      </footer>
       <div ref={dash.tipRef} className="chart-tip" style={{ display: 'none' }} />
     </>
   );
