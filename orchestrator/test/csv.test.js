@@ -7,8 +7,11 @@ import papaparse from 'https://jslib.k6.io/papaparse/5.1.1/index.js';
 // parses the csv) will be executed per each VU which also means that there will be a complete copy
 // per each VU
 const csvData = new SharedArray('another data name', function () {
-  // Load CSV file and parse it using Papa Parse
-  return papaparse.parse(open('./data.csv'), { header: true }).data;
+  // Load CSV file and parse it using Papa Parse.
+  // The path comes from the environment (`CSV_FILE_PATH`): the scenario runner
+  // passes the data file name and uploads it next to the script, so `open()`
+  // resolves it exactly like a local run.
+  return papaparse.parse(open(__ENV.CSV_FILE_PATH), { header: true }).data;
 });
 
 export default function () {
@@ -34,7 +37,7 @@ export default function () {
   check(res, {
     'status is 200': (r) => r.status === 200,
     'is authenticated': (r) => r.json().authenticated === true,
-    'is correct user': (r) => r.json().user === username,
+    'is correct user': (r) => r.json().user === randomUser.username,
   });
 
   sleep(1);

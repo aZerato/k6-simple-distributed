@@ -15,7 +15,7 @@ no state machine — the process only speaks the socket protocol.
 
 | Section                     | Responsibility                                                    |
 |-----------------------------|-----------------------------------------------------------------|
-| Configuration (env)         | `ORCHESTRATOR_URL`, `WORKER_ID`, `PORT` + per-worker tmp paths  |
+| Configuration (env)         | `ORCHESTRATOR_URL`, `WORKER_ID`, `PORT`, `WORKER_TMP_DIR` (per-test working dirs) |
 | `GET /health`               | HTTP endpoint: `{ workerId, status, k6Running }`               |
 | Socket bootstrap            | `socket.io-client` connect (auth `{ workerId }`), infinite reconnection (2 s), `worker:ready` on connect |
 | `orchestrator:start_test`   | Validation → tmp script file → env → `spawn(k6, …, { shell: false })` |
@@ -30,8 +30,9 @@ no state machine — the process only speaks the socket protocol.
 | Variable           | Default               | Role                                                    |
 |--------------------|-----------------------|---------------------------------------------------------|
 | `ORCHESTRATOR_URL` | `http://localhost:3000` | Orchestrator's base URL (WebSocket channel)          |
-| `WORKER_ID`        | `worker-<random7>`    | Identity: socket auth (`{ workerId }`) + tmp file names |
+| `WORKER_ID`        | `worker-<random7>`    | Identity: socket auth (`{ workerId }`)                |
 | `PORT`             | `4000`                | Local HTTP server port (`/health`)                    |
+| `WORKER_TMP_DIR`  | `os.tmpdir()`         | Working directory for the ephemeral test files; each received test creates `test-<timestamp>/` inside it, deleted at test end |
 
 ## Socket protocol
 
@@ -39,7 +40,7 @@ no state machine — the process only speaks the socket protocol.
 
 | Event                   | Payload                                    | Worker action                       |
 |-------------------------|--------------------------------------------|-------------------------------------|
-| `orchestrator:start_test` | `{ scriptContent, vus, duration, envVariables, attachments }` | Writes the tmp script + uploaded data files, spawns k6 (refused if busy) |
+| `orchestrator:start_test` | `{ scriptContent, vus + duration \| startVUs + stages, envVariables, attachments }` | Writes the tmp script + uploaded data files, spawns k6 (refused if busy) |
 | `orchestrator:stop_test` | —                                       | `SIGINT` to the running k6 process  |
 
 **Outbound** (worker → orchestrator):
@@ -57,10 +58,19 @@ no state machine — the process only speaks the socket protocol.
 
 * **No shell:** `spawn(k6, […], { shell: false })` — command operators
   (`;`, `&&`, `|`) are never evaluated.
-* **Sanitized arguments:** `vus` is force-cast with `parseInt` (fallback `1`),
-  `duration` must match `/^[0-9]+[smh]$/` (fallback `10s`).
-* **Sandboxed script:** the received script is written as-is to a per-worker
-  tmp file; k6 is the JS sandbox (no access to the host's Node.js APIs).
+* **Sanitized arguments:** the load profile is built for the k6 v2 CLI —
+  constant-vus: `--vus <n> --duration <d>` (`vus` force-cast with `parseInt`,
+  fallback `1`; `duration` must match `/^[0-9]+[smh]$/`, fallback `10s`);
+  ramping-vus: `--vus <startVUs>` (force-cast, fallback `0`) plus one
+  `--stage <d>:<t>` per stage, every `duration`/`target` validated by a
+  strict regex.
+* **Per-test working directory:** `WORKER_TMP_DIR` (default: `os.tmpdir()`)
+  is the working directory of this worker instance; each received test
+  creates `test-<timestamp>/` inside it (script + data files +
+  `metrics.json`), and the whole directory is deleted at test end.
+* **Sandboxed script:** the received script is written as-is into the
+  per-test working directory; k6 is the JS sandbox (no access to the host's
+  Node.js APIs).
 * **Data files (upload):** `attachments` names are sanitized (no path
   separators, no `.` / `..`), written next to the ephemeral script so relative
   paths in the script (`open('./data.csv')`) resolve like a local run, and

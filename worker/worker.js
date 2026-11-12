@@ -9,10 +9,15 @@ import os from 'os';
 const ORCHESTRATOR_URL = process.env.ORCHESTRATOR_URL || 'http://localhost:3000';
 const WORKER_ID = process.env.WORKER_ID || `worker-${Math.random().toString(36).substring(2, 9)}`;
 const HTTP_PORT = process.env.PORT || 4000;
-const SCRIPT_TMP_PATH = path.join(os.tmpdir(), `k6_script_${WORKER_ID}.js`);
-// Temporary file that receives the raw k6 metrics (`--out json=`),
-// re-read line by line and streamed to the orchestrator for the charts.
-const METRICS_TMP_PATH = path.join(os.tmpdir(), `k6_metrics_${WORKER_ID}.json`);
+// Working directory of this worker instance for the ephemeral test files
+// (k6 script, uploaded data files, raw metrics output). Every received test
+// gets its own sub-directory (`test-<timestamp>`) inside it: created when
+// the test starts, deleted when it ends. Default: the OS temp directory.
+const WORKER_TMP_DIR = process.env.WORKER_TMP_DIR ? path.resolve(process.env.WORKER_TMP_DIR) : os.tmpdir();
+
+// Raw k6 metrics file of the current test (`--out json=`): re-read line by
+// line and streamed to the orchestrator for the charts (set per test).
+let METRICS_TMP_PATH = null;
 
 const app = express();
 let currentK6Process = null;
@@ -24,9 +29,6 @@ let metricsPending = '';   // last unfinished line fragment
 let metricsBuffer = [];   // lines waiting to be sent
 let metricsTimer = null;  // periodic drain interval
 const MAX_BUFFERED_METRICS = 100000; // safety cap if the orchestrator is unreachable
-
-// --- Data files (upload) state ---
-let assetFiles = []; // data files written next to the script (deleted at test end)
 
 // --- HTTP ENDPOINT FOR HEALTH CHECKS ---
 app.get('/health', (req, res) => {
@@ -42,6 +44,7 @@ const server = app.listen(HTTP_PORT, () => {
 });
 
 // --- REAL-TIME CONNECTION TO THE ORCHESTRATOR (WEBSOCKET) ---
+console.log(`[Worker] Ephemeral test files directory: ${WORKER_TMP_DIR}`);
 console.log(`[Worker] Connecting to the orchestrator on ${ORCHESTRATOR_URL}...`);
 const socket = io(ORCHESTRATOR_URL, {
   auth: { workerId: WORKER_ID },
@@ -61,7 +64,7 @@ socket.on('disconnect', () => {
 
 // --- k6 METRICS STREAMING (the `--out json=` file) ---
 function drainMetricsFile() {
-  if (!isRunning) return;
+  if (!isRunning || !METRICS_TMP_PATH) return;
   let st;
   try { st = fs.statSync(METRICS_TMP_PATH); } catch { return; } // file does not exist yet
   if (st.size <= metricsOffset) return;
@@ -104,54 +107,68 @@ socket.on('orchestrator:start_test', (payload) => {
     return socket.emit('worker:error', { message: 'The worker is already busy with a test.' });
   }
 
-  const { scriptContent, vus, duration, envVariables, attachments } = payload;
+  const { scriptContent, vus, duration, startVUs, stages, envVariables, attachments } = payload;
 
   if (!scriptContent) {
     return socket.emit('worker:error', { message: 'The k6 script content is missing.' });
   }
 
-  // 1. Strict validation of the arguments to forbid command injection
-  const safeVus = String(parseInt(vus, 10) || 1);
-  const safeDuration = /^[0-9]+[smh]$/.test(duration) ? duration : '10s';
+  // 1. The load profile is passed as JSON (k6 v2 ignores the script's `options`):
+  //    ramping-vus -> startVUs + stages | constant-vus -> vus + duration
+  const isRamping = Array.isArray(stages) && stages.length > 0;
 
-  console.log(`[Worker] Preparing the k6 test (${safeVus} VUs, ${safeDuration})`);
+  console.log(`[Worker] Preparing the k6 test (${isRamping ? 'ramping-vus' : 'constant-vus'})`);
   isRunning = true;
   socket.emit('worker:status_changed', { status: 'BUSY' });
 
-  // 2. Secure writing of the ephemeral k6 script
+  // 2. Per-test working directory, inside the worker's ephemeral files
+  //    directory: holds the script, the uploaded data files and the raw
+  //    metrics output. Deleted (recursively) at the end of the test.
+  let testDir;
   try {
-    fs.writeFileSync(SCRIPT_TMP_PATH, scriptContent, 'utf-8');
+    testDir = path.join(WORKER_TMP_DIR, `test-${Date.now()}`);
+    fs.mkdirSync(testDir, { recursive: true });
   } catch (err) {
-    console.error('[Worker] Failed to write the temporary script', err);
+    console.error('[Worker] Cannot create the test working directory', err);
     isRunning = false;
     socket.emit('worker:status_changed', { status: 'AVAILABLE' });
-    return socket.emit('worker:error', { message: 'Could not initialize the script file.' });
+    return socket.emit('worker:error', { message: `Cannot create the test working directory: ${err.message}` });
   }
+  const scriptPath = path.join(testDir, 'script.js');
+  const metricsPath = path.join(testDir, 'metrics.json');
+  METRICS_TMP_PATH = metricsPath; // used by the drain loop
+  console.log(`[Worker] Test files in: ${testDir}`);
 
-  // 2b. Data files (CSV, etc.) uploaded with the start order: written next to
-  //     the ephemeral script, so relative paths in the script (`open('./data.csv')`)
-  //     resolve like a local run.
   const failStart = (message) => {
     isRunning = false;
-    for (const f of assetFiles) { try { fs.unlinkSync(f); } catch { /* best effort */ } }
-    assetFiles = [];
+    try { fs.rmSync(testDir, { recursive: true, force: true }); } catch { /* best effort */ }
     socket.emit('worker:status_changed', { status: 'AVAILABLE' });
     return socket.emit('worker:error', { message });
   };
-  assetFiles = [];
+
+  // 3. Secure writing of the ephemeral k6 script
+  try {
+    fs.writeFileSync(scriptPath, scriptContent, 'utf-8');
+  } catch (err) {
+    console.error('[Worker] Failed to write the temporary script', err);
+    return failStart('Could not initialize the script file.');
+  }
+
+  // 3b. Data files (CSV, etc.) uploaded with the start order: written next to
+  //     the ephemeral script, so relative paths in the script
+  //     (`open('./data.csv')`) resolve like a local run.
   if (attachments && typeof attachments === 'object') {
     for (const [rawName, b64] of Object.entries(attachments)) {
       const name = String(rawName).trim();
       if (!name || name === '.' || name === '..' || name.includes('/') || name.includes('\\')) {
         return failStart(`Invalid data file name: ${rawName}.`);
       }
-      const file = path.join(os.tmpdir(), name);
-      if (file === SCRIPT_TMP_PATH || file === METRICS_TMP_PATH) {
+      const file = path.join(testDir, name);
+      if (file === scriptPath || file === metricsPath) {
         return failStart(`Data file name collides with the worker's internal file: ${name}`);
       }
       try {
         fs.writeFileSync(file, Buffer.from(String(b64), 'base64'));
-        assetFiles.push(file);
       } catch (err) {
         console.error('[Worker] Failed to write the data file', err);
         return failStart(`Could not write the data file: ${name}.`);
@@ -159,30 +176,46 @@ socket.on('orchestrator:start_test', (payload) => {
     }
   }
 
-  // 3. Metrics streaming preparation (empty file + zeroed offsets)
-  try { fs.unlinkSync(METRICS_TMP_PATH); } catch { /* first run */ }
+  // 4. Metrics streaming preparation (zeroed offsets; k6 creates the file)
   metricsOffset = 0;
   metricsPending = '';
   metricsBuffer = [];
 
-  // 4. Secure construction of the environment
+  // 5. Secure construction of the environment
   const k6Env = {
     ...process.env,
     ...envVariables,
     K6_NO_USAGE_REPORT: 'true' // Optional: disables k6's telemetry ping
   };
 
-  // 5. Isolated launch of k6 (shell: false prevents the evaluation of malicious strings)
+  // 6. Isolated launch of k6 (shell: false prevents the evaluation of malicious strings)
   //    `--out json=`: the raw data points are written to a file,
   //    which we re-read line by line to feed the console charts.
   const k6Binary = os.platform() === 'win32' ? 'k6.exe' : 'k6';
 
+  // Build the k6 v2 CLI from the profile (ramping or constant)
+  let profileArgs;
+  if (isRamping) {
+    const safeStart = String(parseInt(startVUs, 10) || 0);
+    profileArgs = ['--vus', safeStart];
+    for (const st of stages) {
+      const d = String(st && st.duration), t = String(st && st.target);
+      if (!/^[0-9]+[smh]$/.test(d) || !/^[0-9]+$/.test(t)) {
+        return failStart(`Invalid stage in the test order: ${JSON.stringify(st)}`);
+      }
+      profileArgs.push('--stage', `${d}:${t}`);
+    }
+  } else {
+    const safeVus = String(parseInt(vus, 10) || 1);
+    const safeDuration = /^[0-9]+[smh]$/.test(duration) ? duration : '10s';
+    profileArgs = ['--vus', safeVus, '--duration', safeDuration];
+  }
+
   currentK6Process = spawn(k6Binary, [
     'run',
-    '--vus', safeVus,
-    '--duration', safeDuration,
-    '--out', `json=${METRICS_TMP_PATH}`,
-    SCRIPT_TMP_PATH
+    ...profileArgs,
+    '--out', `json=${metricsPath}`,
+    scriptPath
   ], {
     shell: false,
     env: k6Env
@@ -193,7 +226,7 @@ socket.on('orchestrator:start_test', (payload) => {
   // Periodic drain of the metrics file toward the orchestrator
   metricsTimer = setInterval(drainMetricsFile, 500);
 
-  // 6. Real-time streaming of the stdout and stderr logs
+  // 7. Real-time streaming of the stdout and stderr logs
   currentK6Process.stdout.on('data', (data) => {
     socket.emit('worker:log', { type: 'stdout', output: data.toString() });
   });
@@ -202,7 +235,7 @@ socket.on('orchestrator:start_test', (payload) => {
     socket.emit('worker:log', { type: 'stderr', output: data.toString() });
   });
 
-  // 7. Handling of the natural end or of an error of the process
+  // 8. Handling of the natural end or of an error of the process
   currentK6Process.on('error', (err) => {
     console.error('[Worker] System error while running k6:', err);
     socket.emit('worker:log', { type: 'stderr', output: `Internal error of the k6 binary: ${err.message}` });
@@ -215,13 +248,11 @@ socket.on('orchestrator:start_test', (payload) => {
     if (metricsTimer) { clearInterval(metricsTimer); metricsTimer = null; }
     drainMetricsFile();
 
-    // Cleanup of the temporary files (data files + script + metrics)
-    for (const p of [...assetFiles, SCRIPT_TMP_PATH, METRICS_TMP_PATH]) {
-      try {
-        if (fs.existsSync(p)) fs.unlinkSync(p);
-      } catch (e) {
-        console.warn(`[Worker] Could not delete ${p}:`, e.message);
-      }
+    // Cleanup of the test working directory (script + data files + metrics)
+    try {
+      fs.rmSync(testDir, { recursive: true, force: true });
+    } catch (e) {
+      console.warn(`[Worker] Could not delete the test working directory:`, e.message);
     }
 
     currentK6Process = null;

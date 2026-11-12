@@ -2,15 +2,18 @@
 
 Ready-to-run fixtures that exercise `POST /api/test/start` end to end — no
 temp files to recreate. They cover **worker selection** (see
-`docs/architecture.md` §2.1) and the two script sources (`scriptContent`
-pasted / `scriptPath` file).
+`docs/architecture.md` §2.1), the two script sources (`scriptContent`
+pasted / `scriptPath` file), and both **load profiles** (constant-vus:
+`totalVus` + `duration`, ramping-vus: `startVUs` + `stages`).
 
 | File               | Sends                                                    | Expected             |
 |--------------------|----------------------------------------------------------|----------------------|
 | `t_empty.json`     | `workerIds: []` (empty selection)                        | `422`               |
 | `t_unknown.json`   | `workerIds: ["nope-123"]` (unknown worker)               | `400`               |
-| `t_all.json`       | pasted `scriptContent`, no selection → all available     | `200` (test starts) |
+| `t_bad_stage.json` | `stages: [{ "duration": "abc", "target": "x" }` (invalid stage) | `400` |
+| `t_all.json`       | pasted `scriptContent`, no selection → all available (constant profile) | `200` (test starts) |
 | `t_all_real.json`  | `scriptPath: e2e_script.js`, no selection → all available| `200` (test starts) |
+| `t_ramping.json`  | `startVUs` + `stages` (ramping profile), no selection   | `200` (test starts) |
 | `e2e_script.js`    | the k6 script read by `t_all_real.json` (hits `k6.io`)  | —                   |
 
 `e2e_script.js` is a real (tiny) k6 script: it does `http.get('https://k6.io')`
