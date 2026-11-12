@@ -1,7 +1,7 @@
 # Worker Code Structure
 
 Unlike the orchestrator, the worker is **one file** (`worker/worker.js`,
-~220 lines): a standalone Node.js agent that keeps a persistent WebSocket
+~250 lines): a standalone Node.js agent that keeps a persistent WebSocket
 link with the orchestrator, runs the official `k6` binary on the received
 script, and streams back the console logs and the raw metrics. No routing,
 no state machine — the process only speaks the socket protocol.
@@ -21,7 +21,7 @@ no state machine — the process only speaks the socket protocol.
 | `orchestrator:start_test`   | Validation → tmp script file → env → `spawn(k6, …, { shell: false })` |
 | Log streaming               | `worker:log` per k6 stdout/stderr chunk                        |
 | Metrics drain (500 ms)      | Re-reads `--out json=<tmpfile>` from the last offset, batches `worker:metrics` |
-| Process close               | Final drain, tmp files cleanup, `worker:test_finished`, back to AVAILABLE |
+| Process close               | Final drain, tmp files cleanup, `worker:test_finished`, back to AVAILABLE (natural `close` **or** spawn `error`) |
 | `orchestrator:stop_test`    | `SIGINT` to the k6 process                                     |
 | `SIGTERM` handler           | Kill k6 (`SIGKILL`), close HTTP server, exit                   |
 
@@ -80,6 +80,11 @@ no state machine — the process only speaks the socket protocol.
   deleted at test end.
 * `K6_NO_USAGE_REPORT=true` disables k6's telemetry.
 * One test at a time: a `start_test` while BUSY answers `worker:error`.
+* **Spawn failure:** if the k6 process cannot even start (binary missing from
+  the PATH…), Node emits `error` — never `close` — so the worker closes the
+  test itself: final drain, working-directory cleanup, `worker:test_finished`
+  (exit code `-1`), back to AVAILABLE (otherwise it would stay BUSY and the
+  session RUNNING forever).
 
 ## Metrics pipeline
 

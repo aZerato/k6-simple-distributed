@@ -93,7 +93,7 @@ export function sessionsSummary() {
     workerCount: s.workers.size,
     workerIds: [...s.workers.keys()],
     rawTruncated: s.rawTruncated,
-    vusMax: s.vusPeak || (vusOf(s) ? (s.metrics.get('vus') ? s.metrics.get('vus').max : 0) : 0)
+    vusMax: s.vusPeak || s.metrics.get('vus')?.max || 0
   }));
 }
 

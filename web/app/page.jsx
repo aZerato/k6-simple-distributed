@@ -74,7 +74,6 @@ export default function Page() {
             setAutoScroll={dash.setAutoScroll}
             clearLogs={dash.clearLogs}
             logviewRef={dash.logviewRef}
-            onLogScroll={dash.onLogScroll}
             lastAppendedRef={dash.lastAppendedRef}
             clearedAtRef={dash.clearedAtRef}
           />

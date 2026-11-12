@@ -16,7 +16,6 @@ export default function LogsPanel({
   setAutoScroll,
   clearLogs,
   logviewRef,
-  onLogScroll,
   lastAppendedRef,
   clearedAtRef
 }) {
@@ -56,7 +55,6 @@ export default function LogsPanel({
       <div
         ref={logviewRef}
         className={'logview' + (arr.length === 0 ? ' is-empty' : '')}
-        onScroll={onLogScroll}
       >
         <pre className="logpre">
           {view.map((l, i) => {

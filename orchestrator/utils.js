@@ -20,3 +20,15 @@ export function fmtBytes(v) {
   if (a < 1e9) return `${(v / 1e6).toFixed(1)} MB`;
   return `${(v / 1e9).toFixed(1)} GB`;
 }
+
+// Duration helpers (k6-style "2m"/"30s"/"2h" -> seconds, and back).
+export function parseDurationSeconds(d) {
+  const m = typeof d === 'string' && /^([0-9]+)([smh])$/.exec(d);
+  if (!m) return 0;
+  const n = parseInt(m[1], 10);
+  return m[2] === 'h' ? n * 3600 : m[2] === 'm' ? n * 60 : n;
+}
+
+export function formatSeconds(s) {
+  return s >= 60 && s % 60 === 0 ? `${s / 60}m` : `${Math.ceil(s)}s`;
+}
