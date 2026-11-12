@@ -10,7 +10,7 @@ sparklines, tooltip) stays a dependency-free imperative engine, in
 
 | File                           | Role                                                                          |
 |--------------------------------|------------------------------------------------------------------------------|
-| `app/layout.jsx` / `app/page.jsx` | Shell (fonts, global CSS) + page assembly                        |
+| `app/layout.jsx` / `app/page.jsx` | Shell (fonts, global CSS) + page assembly (footer: project GitHub link) |
 | `hooks/useDashboard.js`           | "Brain": socket `ui:*`, sessions, rows, series, logs, watchdog           |
 | `lib/config.js`                   | Orchestrator URL (`NEXT_PUBLIC_ORCHESTRATOR_URL`) + caps            |
 | `lib/format.js`                   | Formatting (timestamps, numbers, bytes)                                     |

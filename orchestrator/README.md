@@ -15,7 +15,7 @@ wires express + socket.io and starts listening; everything else is imported:
 | `scripts.js`    | k6 script validation (rejects Node.js module imports)         |
 | `reports/json.js`| JSON report (series + fusion/per-worker stats + logs)                 |
 | `reports/txt.js`| Text report (summary + per-worker metrics)                          |
-| `reports/html.js`| Self-contained HTML report (SVG + embedded JS: checkboxes, tooltip)  |
+| `reports/html.js`| Self-contained HTML report (SVG + embedded JS: checkboxes, tooltip, project footer link) |
 | `routes.js`     | HTTP API (controllers): `registerRoutes(app, io)`                   |
 | `sockets.js`    | Socket.io channel: `registerSockets(io)` — workers + web console        |
 

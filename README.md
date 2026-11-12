@@ -158,7 +158,8 @@ the same origin as the API and Socket.io. It lets you:
     (avg + p95), with the fusion curve **and one curve per worker** — checkboxes
     per chart to show/hide every series. Summary,
     **all-metrics** table (count, rate, min, avg, p70/p80/p90/p95/p99, max), and
-    per-worker logs. Opens in a browser, no server required.
+    per-worker logs, and a footer with the project's GitHub link.
+    Opens in a browser, no server required.
   * **`.json`** — the full report: totals (requests, failed %, data, checks),
     final statistics for every metric (percentiles included), the
     per-second timestamped series (reconstructable as charts, with the **per

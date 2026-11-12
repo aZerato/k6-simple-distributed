@@ -32,7 +32,7 @@ no state machine — the process only speaks the socket protocol.
 | `ORCHESTRATOR_URL` | `http://localhost:3000` | Orchestrator's base URL (WebSocket channel)          |
 | `WORKER_ID`        | `worker-<random7>`    | Identity: socket auth (`{ workerId }`)                |
 | `PORT`             | `4000`                | Local HTTP server port (`/health`)                    |
-| `WORKER_TMP_DIR`  | `os.tmpdir()`         | Working directory for the ephemeral test files; each received test creates `test-<timestamp>/` inside it, deleted at test end |
+| `WORKER_TMP_DIR`  | `os.tmpdir()`         | Working directory for the ephemeral test files; each received test creates `test-<timestamp>-<pid>/` inside it, deleted at test end |
 
 ## Socket protocol
 
@@ -66,8 +66,11 @@ no state machine — the process only speaks the socket protocol.
   strict regex.
 * **Per-test working directory:** `WORKER_TMP_DIR` (default: `os.tmpdir()`)
   is the working directory of this worker instance; each received test
-  creates `test-<timestamp>/` inside it (script + data files +
-  `metrics.json`), and the whole directory is deleted at test end.
+  creates `test-<timestamp>-<pid>/` inside it (script + data files +
+  `metrics.json`), and the whole directory is deleted at test end. The
+   `<pid>` suffix keeps two worker instances from sharing a directory
+   when a test reaches them in the same millisecond (one file, two k6
+   writers = corrupted metrics).
 * **Sandboxed script:** the received script is written as-is into the
   per-test working directory; k6 is the JS sandbox (no access to the host's
   Node.js APIs).

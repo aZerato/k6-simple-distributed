@@ -176,6 +176,8 @@ export function buildHtmlReport(s) {
   summary { cursor: pointer; color: #9fb0c4; }
   pre { background: #0d141d; border: 1px solid rgba(140,165,195,.15); border-radius: 6px; padding: 10px; font: 12px/1.5 "IBM Plex Mono", ui-monospace, monospace; overflow-x: auto; }
   .foot { margin-top: 36px; color: #5c6b80; font-size: 12px; }
+  .foot a { color: #46e5b1; text-decoration: none; }
+  .foot a:hover { text-decoration: underline; }
 </style>
 </head>
 <body>
@@ -218,7 +220,7 @@ export function buildHtmlReport(s) {
   <h2>Logs per worker</h2>
   ${logsHtml || '<p class="sub">No logs.</p>'}
 
-  <p class="foot">Generated on ${genAt} by the distributed k6 orchestrator — hover over the charts to read the values at time t.</p>
+  <p class="foot">Generated on ${genAt} by the <a href="https://github.com/aZerato/k6-simple-distributed">distributed k6 orchestrator</a> — hover over the charts to read the values at time t.</p>
 </div>
 <div id="tip"></div>
 <script>
