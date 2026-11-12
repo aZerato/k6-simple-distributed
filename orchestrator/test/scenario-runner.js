@@ -21,6 +21,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import readline from 'node:readline/promises';
 import { io as connectSocket } from 'socket.io-client';
+import { parseDurationSeconds } from '../utils.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '../..');          // project root
@@ -34,16 +35,6 @@ const idIdx = argv.indexOf('--id');
 const presetId = idIdx >= 0 ? argv[idIdx + 1] : null;
 
 // --- small helpers ---
-function parseDurationToSeconds(d) {
-  const m = typeof d === 'string' && /^([0-9]+)([smh])$/.exec(d);
-  if (!m) return 0;
-  const n = parseInt(m[1], 10);
-  return m[2] === 'h' ? n * 3600 : m[2] === 'm' ? n * 60 : n;
-}
-function formatSecondsToK6(s) {
-  if (s >= 60 && s % 60 === 0) return `${s / 60}m`;
-  return `${Math.ceil(s)}s`;
-}
 function nomFromScript(name) {
   return path.basename(name).split('.')[0].replace(/[^\w-]+/g, '_');
 }
@@ -233,8 +224,8 @@ async function main() {
 
   // --- wait for completion ---
   const expectedSecs = scenario.options && scenario.options.executor === 'constant-vus'
-    ? parseDurationToSeconds(scenario.options.duration)
-    : (scenario.options.stages || []).reduce((a, s) => a + parseDurationToSeconds(s.duration), 0);
+    ? parseDurationSeconds(scenario.options.duration)
+    : (scenario.options.stages || []).reduce((a, s) => a + parseDurationSeconds(s.duration), 0);
   await waitForFinish(start.sessionId, (expectedSecs * 1.5 + 60) * 1000);
   logSocket.disconnect(); // no more live logs needed
 

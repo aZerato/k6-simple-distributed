@@ -41,7 +41,7 @@ The system is based on an agent model continuously connected to the orchestrator
 4. **Real-time upload (`worker:log`):** Every `stdout`/`stderr` chunk produced by k6 is pushed over the WebSocket to the orchestrator for live display.
 5. **Raw metrics (`worker:metrics`):** In parallel, k6 writes its data points to an ephemeral file (`--out json=`), which the worker re-reads line by line and batches to the orchestrator (see §5).
 6. **Emergency stop (`orchestrator:stop_test`):** The orchestrator can interrupt the test at any time; the worker sends `SIGINT` to the k6 process.
-7. **End of test (`worker:test_finished`):** Once the k6 process exits, the worker sends back `{ exitCode }`, cleans up its ephemeral files, and goes back to the "Available" state (`worker:status_changed`).
+7. **End of test (`worker:test_finished`):** Once the k6 process exits — or fails to even start (binary missing: Node emits `error`, never `close`, so the worker closes the test itself with exit code `-1`) — the worker sends back `{ exitCode }`, cleans up its ephemeral files, and goes back to the "Available" state (`worker:status_changed`).
 
 #### 2.1 Targeted execution (worker selection)
 

@@ -238,13 +238,11 @@ socket.on('orchestrator:start_test', (payload) => {
     socket.emit('worker:log', { type: 'stderr', output: data.toString() });
   });
 
-  // 8. Handling of the natural end or of an error of the process
-  currentK6Process.on('error', (err) => {
-    console.error('[Worker] System error while running k6:', err);
-    socket.emit('worker:log', { type: 'stderr', output: `Internal error of the k6 binary: ${err.message}` });
-  });
-
-  currentK6Process.on('close', (code) => {
+  // 8. End of the test, shared by the natural `close` and the spawn `error`
+  //    (on a spawn failure Node never emits `close`, so without this the
+  //    worker would stay BUSY and the session RUNNING forever).
+  const proc = currentK6Process;
+  const endTest = (code) => {
     console.log(`[Worker] k6 process finished with code: ${code}`);
 
     // Final drain, then stop the metrics streaming
@@ -264,6 +262,17 @@ socket.on('orchestrator:start_test', (payload) => {
     // End notification to the orchestrator
     socket.emit('worker:test_finished', { exitCode: code });
     socket.emit('worker:status_changed', { status: 'AVAILABLE' });
+  };
+
+  proc.on('error', (err) => {
+    console.error('[Worker] System error while running k6:', err.message);
+    socket.emit('worker:log', { type: 'stderr', output: `Internal error of the k6 binary: ${err.message}` });
+    if (currentK6Process === proc) endTest(-1);
+  });
+
+  proc.on('close', (code) => {
+    if (currentK6Process !== proc) return; // already ended by the spawn error
+    endTest(code);
   });
 });
 

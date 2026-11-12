@@ -19,20 +19,10 @@ import {
 } from './state.js';
 import { findNodeBuiltinImport } from './scripts.js';
 import { MAX_ATTACHMENTS_TOTAL_BYTES } from './constants.js';
+import { parseDurationSeconds, formatSeconds } from './utils.js';
 import { buildJsonReport } from './reports/json.js';
 import { buildTxtReport } from './reports/txt.js';
 import { buildHtmlReport } from './reports/html.js';
-
-// Duration helpers (k6-style "2m"/"30s"/"2h" -> seconds, and back).
-function parseDurationSeconds(d) {
-  const m = typeof d === 'string' && /^([0-9]+)([smh])$/.exec(d);
-  if (!m) return 0;
-  const n = parseInt(m[1], 10);
-  return m[2] === 'h' ? n * 3600 : m[2] === 'm' ? n * 60 : n;
-}
-function formatSeconds(s) {
-  return s >= 60 && s % 60 === 0 ? `${s / 60}m` : `${Math.ceil(s)}s`;
-}
 
 export function registerRoutes(app, io) {
   app.post('/api/test/start', (req, res) => {

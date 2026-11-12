@@ -45,7 +45,6 @@ export function useDashboard() {
   const runningSessionIdRef = useRef(null); // RUNNING session (from ui:session_state)
   const lastRowAtRef = useRef(0); // timestamp of the last snapshot received
   const lastResyncAtRef = useRef(0); // last forced replay (anti-loop safeguard)
-  const stickRef = useRef(true); // "stuck" to the bottom of the logs?
   const hoverRef = useRef(null); // { redraw, index } — chart currently hovered
   const logviewRef = useRef(null);
   const tipRef = useRef(null);
@@ -70,6 +69,7 @@ export function useDashboard() {
   const [logRev, setLogRev] = useState(0); // tick: the logs changed
   const [totalLogLines, setTotalLogLines] = useState(0);
   const [autoScroll, setAutoScroll] = useState(true);
+  const autoScrollRef = useRef(true); // "Auto-scroll" checkbox (read from the socket callbacks)
   const [formStatus, setFormStatus] = useState({ cls: '', text: '' });
   const [submitting, setSubmitting] = useState(false);
 
@@ -77,14 +77,11 @@ export function useDashboard() {
   useEffect(() => { metricNameRef.current = metricName; }, [metricName]);
   useEffect(() => { seriesVisibleRef.current = seriesVisible; }, [seriesVisible]);
   useEffect(() => { curveModeRef.current = curveMode; }, [curveMode]);
+  useEffect(() => { autoScrollRef.current = autoScroll; }, [autoScroll]);
 
   /* ---------- Logs helpers ---------- */
 
-  const nearBottom = () => {
-    const el = logviewRef.current;
-    return el.scrollHeight - el.scrollTop - el.clientHeight < 80;
-  };
-
+  // Keep the logs view pinned to the latest line (when "Auto-scroll" is on)
   const scrollBottom = () => {
     const el = logviewRef.current;
     if (el) el.scrollTop = el.scrollHeight;
@@ -192,6 +189,8 @@ export function useDashboard() {
       setActiveWorker(workerId);
     }
     setLogRev((r) => r + 1);
+    // "Auto-scroll": pin the view to the newest line
+    if (autoScrollRef.current) scrollBottom();
   };
 
   /* ---------- Real-time socket ---------- */
@@ -538,7 +537,6 @@ export function useDashboard() {
     logRev,
     lastAppendedRef,
     clearedAtRef,
-    onLogScroll: () => { stickRef.current = nearBottom(); },
 
     // Sessions & reports
     sessions,
