@@ -1,5 +1,6 @@
 'use client';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { lintJs, lintJson } from '../lib/lint';
 
 const DEFAULT_SCRIPT = [
   "import http from 'k6/http';",
@@ -56,6 +57,15 @@ export default function TestForm({ formStatus, submitting, onSubmit, onStop, wor
     } catch { /* corrupted entry: start fresh */ }
   }, []);
 
+  // Live lint of the two pasted inputs (advisory, non-blocking): JS syntax for
+  // the k6 script (debounced acorn parse) and JSON + shape for the load profile.
+  const [scriptLint, setScriptLint] = useState({ ok: true, message: '' });
+  const profileLint = useMemo(() => lintJson(profileJson), [profileJson]);
+  useEffect(() => {
+    const t = setTimeout(() => setScriptLint(lintJs(script)), 200);
+    return () => clearTimeout(t);
+  }, [script]);
+
   const selected = (workers || []).filter((w) => picks[w.id] !== false);
   const fileNames = Object.keys(dataFiles);
 
@@ -72,6 +82,18 @@ export default function TestForm({ formStatus, submitting, onSubmit, onStop, wor
       delete next[name];
       return next;
     });
+  };
+
+  // Border tint + status-line helpers, shared by the two linted inputs.
+  const lintBorder = (lint, text) => (text.trim() ? (lint.ok ? ' lint-ok' : ' lint-err') : '');
+  const lintMessage = (lint, text) => {
+    if (!text.trim() || lint.ok) return null;
+    return (
+      <span className="field-lint">
+        {lint.line ? `line ${lint.line}, col ${lint.col} — ` : ''}
+        {lint.message}
+      </span>
+    );
   };
 
   return (
@@ -122,22 +144,24 @@ export default function TestForm({ formStatus, submitting, onSubmit, onStop, wor
           <span className="field-label">Script k6 (JavaScript)</span>
           <textarea
             id="script"
-            className="mono"
+            className={'mono' + lintBorder(scriptLint, script)}
             spellCheck="false"
             value={script}
             onChange={(e) => setScript(e.target.value)}
           />
+          {lintMessage(scriptLint, script)}
         </label>
         <label className="field">
           <span className="field-label">Load profile (k6 <code>scenarios</code> JSON)</span>
           <textarea
             id="profile"
-            className="mono"
+            className={'mono' + lintBorder(profileLint, profileJson)}
             spellCheck="false"
             rows={7}
             value={profileJson}
             onChange={(e) => setProfileJson(e.target.value)}
           />
+          {lintMessage(profileLint, profileJson)}
           <span className="field-hint">
             A k6 v2 <code>scenarios</code> map. The orchestrator splits it over the targeted
             workers and sends each its share as the <code>K6_SCENARIO_OPTIONS</code> env var;

@@ -325,6 +325,15 @@ input::placeholder { color: var(--text-faint); }
   color: var(--text-faint);
 }
 
+/* Live lint (Script k6 / Load profile inputs): border tint + status line */
+textarea.lint-ok { border-color: rgba(70, 229, 177, 0.5); }
+textarea.lint-err { border-color: rgba(255, 92, 92, 0.7); }
+.field-lint {
+  font: 400 11px 'IBM Plex Mono', monospace;
+  line-height: 1.4;
+  color: #ff9c9c;
+}
+
 /* Targeted workers (test form): one checkbox per worker + status */
 .field-label .field-quick {
   margin-left: 8px;

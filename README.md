@@ -129,7 +129,9 @@ is served by Express on the same origin as the API and Socket.io. It lets you:
   over the targeted workers and sent to each as the `K6_SCENARIO_OPTIONS`
   `__ENV` variable), optional **data files** (uploaded next to the ephemeral
   script so relative paths in the script, e.g. `open('./data.csv')`, work as
-  in a local run) — and **stop** a test as an emergency stop.
+  in a local run) — and **stop** a test as an emergency stop. The pasted
+  **Script k6** (JS) and **Load profile** (JSON) inputs are live-linted
+  (syntax + shape) as you type.
 * **Download the session report** (the 10 most recent sessions stay selectable
   in the "Report" strip):
   * **`.html`** — self-contained page: interactive SVG charts for the main
