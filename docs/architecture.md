@@ -37,7 +37,7 @@ The system is based on an agent model continuously connected to the orchestrator
 
 1. **Connection & registration:** At startup, the Node.js worker connects to the orchestrator (Socket.io, auth `{ workerId }`) and announces itself with `worker:ready` (`{ status }`); the link is self-healing (infinite reconnection, 2 s delay).
 2. **Test order (`orchestrator:start_test`):** The orchestrator sends each **targeted worker** a JSON payload `{ scriptContent, envVariables, attachments }`. The **load profile** is not a top-level field: it rides inside `envVariables` as the `K6_SCENARIO_OPTIONS` variable — a JSON string carrying that worker's share of the k6 v2 `scenarios` map (see §2.1) — which the script reads with `options.scenarios = JSON.parse(__ENV.K6_SCENARIO_OPTIONS)`. `attachments` carries the uploaded data files (see §2.2).
-3. **Secure execution:** The worker creates a **per-test working directory** — `test-<timestamp>-<pid>/` inside its ephemeral files directory (`WORKER_TMP_DIR` env var, default: the OS temp dir; the `<pid>` suffix keeps two worker instances from sharing a directory on same-millisecond starts) — and writes the JS script, the uploaded data files, when any, and the raw metrics output there (next to each other, so relative paths in the script resolve like a local run), sanitizes the arguments, and launches k6 in isolation (`{ shell: false }`), then announces `worker:status_changed` (`BUSY`). The whole directory is deleted at the end of the test. A refusal (already busy, missing script, invalid data file) is answered with `worker:error`.
+3. **Secure execution:** The worker creates a **per-test working directory** — `test-<timestamp>-<pid>/` inside its ephemeral files directory (`WORKER_TMP_DIR` env var, default: the OS temp dir; the `<pid>` suffix keeps two worker instances from sharing a directory) — writes the script, the uploaded data files (when any) and the raw metrics output next to each other (so relative paths in the script resolve like a local run), and launches k6 in isolation (`{ shell: false }`), then announces `worker:status_changed` (`BUSY`). The directory is deleted at test end. A refusal (busy, missing script, invalid data file) is answered with `worker:error`.
 4. **Real-time upload (`worker:log`):** Every `stdout`/`stderr` chunk produced by k6 is pushed over the WebSocket to the orchestrator for live display.
 5. **Raw metrics (`worker:metrics`):** In parallel, k6 writes its data points to an ephemeral file (`--out json=`), which the worker re-reads line by line and batches to the orchestrator (see §5).
 6. **Emergency stop (`orchestrator:stop_test`):** The orchestrator can interrupt the test at any time; the worker sends `SIGINT` to the k6 process.
@@ -83,18 +83,15 @@ orchestrator's disk):
 
 Relative paths in the script therefore behave exactly like a local `k6 run`:
 upload `data.csv` and keep `open('./data.csv')` unchanged. A script can also
-take the file name from the environment — e.g. `open(__ENV.CSV_FILE_PATH)` — so
-one script runs against different data files; the scenario runner
-(`cli/scenario-runner.js`, see `cli/README.md`) does exactly that: it uploads each
-scenario's data files and passes their names as `__ENV` variables. The same
-runner sends the scenario's `options` — a single k6 v2 scenario definition (the
-load profile) — wrapped under the `default` name into the `scenarios` map the
-API expects (`scenarioOptions`); the API splits it over the workers and each
-script reads its share with
-`options.scenarios = JSON.parse(__ENV.K6_SCENARIO_OPTIONS)` (see §4).
-While the test runs, the runner also joins the orchestrator's dashboard socket
-room (the plain web-console profile, no `workerId`) and prints each selected
-worker's k6 stdout/stderr live on the console, line by line.
+take the file name from the environment — e.g. `open(__ENV.CSV_FILE_PATH)` —
+so one script runs against different data files.
+
+The scenario runner (`cli/scenario-runner.js`, see `cli/README.md`) does
+exactly that: it uploads each scenario's data files and passes their names as
+`__ENV` variables, sends the scenario's `options` (wrapped under the `default`
+name into the `scenarios` map the API expects) and, while the test runs, joins
+the orchestrator's dashboard socket room (no `workerId`) to print each
+selected worker's k6 stdout/stderr live.
 
 ---
 
@@ -146,13 +143,6 @@ k6Process.on('close', (code) => {
 });
 ```
 
-> **k6 v2:** the load profile is the script's `options.scenarios` map. The
-> worker sends **no** profile CLI argument (a CLI `--vus`/`--stage` would
-> override the script's `scenarios` entirely); instead it sets the
-> `K6_SCENARIO_OPTIONS` env var — the worker's split share of the `scenarios`
-> map, as a JSON string — and the script consumes it with
-> `options.scenarios = JSON.parse(__ENV.K6_SCENARIO_OPTIONS)`.
-
 ---
 
 ## 5. Centralization of Performance Metrics
@@ -178,4 +168,4 @@ A global **"Curves"** control (segmented button above the charts) switches the d
 | **Per worker** | One curve per worker (no fusion)  |
 | **All**      | Fusion + every worker               |
 
-Switching mode resets the per-chart checkboxes, but a manual checkbox always wins over the mode (per-series override). The canvases are observed (`ResizeObserver`) and re-drawn on resize, so the curves render correctly without a manual window resize.
+Switching mode resets the per-chart checkboxes, but a manual checkbox always wins over the mode (per-series override).

@@ -7,13 +7,9 @@ You can run your tests via a web ui or via an API.
 
 ![UI](./docs/img/ui.png)
 
-![UI streamed log from each worker](./docs/img/ui-realtime-log.png)
-
 ![HTML Report](./docs/img/report.png)
 
-![HTML Report graph](./docs/img/report-graph.png)
-
-![HTML Report metrics](./docs/img/report-metrics.png)
+![HTML Report](./docs/img/report-2.png)
 
 ## Logic / objectives
 
@@ -25,12 +21,11 @@ Read the [guide](./docs/setup.md)
 
 ## Run Commands per OS
 
-To set the environment variables (`ORCHESTRATOR_URL`, `WORKER_ID`, `PORT`, and optionally `WORKER_TMP_DIR` — the working directory of a worker's ephemeral test files, default: the OS temp dir), the syntax varies with the operating system and the terminal used.
+Configuration is done with environment variables: `ORCHESTRATOR_URL`, `WORKER_ID`, `PORT`, and optionally `WORKER_TMP_DIR` — the worker's ephemeral test-files directory (default: the OS temp dir).
 
 ### Running on Windows
 
 #### Option A: via PowerShell (recommended on Windows)
-In PowerShell, the environment variables must be defined on separate lines before running the script:
 
 * **For the Orchestrator:**
   ```powershell
@@ -39,24 +34,25 @@ In PowerShell, the environment variables must be defined on separate lines befor
   ```
 * **For a Worker (Agent):**
   ```powershell
-  $env:ORCHESTRATOR_URL="http://<IP_ORCHESTRATEUR>:3000"
+  $env:ORCHESTRATOR_URL="http://<IP_ORCHESTRATOR>:3000"
   $env:WORKER_ID="worker-windows-01"
   $env:PORT="4000"
-  # $env:WORKER_TMP_DIR="D:\k6-worker-tmp"   # optional: test working directory (default: OS temp dir)
+  # $env:WORKER_TMP_DIR="D:\k6-worker-tmp"   # optional (default: OS temp dir)
   node worker.js
   ```
 
 #### Option B: via the classic Command Prompt (cmd.exe)
+
 ```cmd
 :: For the Orchestrator
 set PORT=3000
 node orchestrator.js
 
 :: For a Worker (Agent)
-set ORCHESTRATOR_URL=http://<IP_ORCHESTRATEUR>:3000
+set ORCHESTRATOR_URL=http://<IP_ORCHESTRATOR>:3000
 set WORKER_ID=worker-windows-01
 set PORT=4000
-:: set WORKER_TMP_DIR=D:\k6-worker-tmp   (optional: test working directory, default: OS temp dir)
+:: set WORKER_TMP_DIR=D:\k6-worker-tmp   (optional, default: OS temp dir)
 node worker.js
 ```
 
@@ -64,37 +60,20 @@ node worker.js
 
 ### Running on Linux and macOS
 
-On Unix-like systems (Bash / Zsh) you can declare the environment variables on the same line, just before the Node command.
-
 * **For the Orchestrator:**
   ```bash
   PORT=3000 node orchestrator.js
   ```
-
 * **For a Worker (Agent):**
   ```bash
-  # Optional: WORKER_TMP_DIR=/tmp/k6-worker-tmp — test working directory (default: OS temp dir)
-  ORCHESTRATOR_URL="http://<IP_ORCHESTRATEUR>:3000" WORKER_ID="worker-linux-01" PORT=4000 node worker.js
+  ORCHESTRATOR_URL="http://<IP_ORCHESTRATOR>:3000" WORKER_ID="worker-linux-01" PORT=4000 node worker.js
+  # optional: WORKER_TMP_DIR=/tmp/k6-worker-tmp (default: OS temp dir)
   ```
 
----
-
-### Test run
-
-* **For the Orchestrator:**
+Then, from the Orchestrator's browser, open **`http://localhost:3000`** for
+the web console — or, via the API, trigger the one-shot demo test:
 ```shell
-node \orchestrator\orchestrator.js
-```
-
-* **For a Worker (Agent):**
-```shell
-node \worker\worker.js
-```
-
-Then, from the Orchestrator's browser, open **`http://localhost:3000`** (see section 5) —
-or, via the API, you can trigger the demo test located here:
-```shell
-node \orchestrator\test\trigger.api.js
+node orchestrator/test/trigger.api.js
 ```
 
 To smoke-test the whole orchestrator API (worker selection + start/stop), run
@@ -102,113 +81,88 @@ the ready-to-run E2E fixtures: `node orchestrator/test/e2e/run.js` (see
 `orchestrator/test/e2e/README.md` for what each case covers).
 
 To run a **named scenario** end to end — pick an id, launch it via the API,
-follow every selected worker's live k6 logs on the console, wait for it to
+stream every selected worker's live k6 logs on the console, wait for it to
 finish, then archive `report.json` + `report.html` + a `manifest.md` under
-`tmp/<id>_<name>_<timestamp>/` (archive directory override: `--reportsDir <path>`)
-— use the scenario runner:
+`tmp/<id>_<name>_<timestamp>/` — use the scenario runner (see `cli/README.md`):
 ```shell
 node cli/scenario-runner.js --scenarios orchestrator/test/scenarios.tests.json         # interactive (prompt for an id)
 node cli/scenario-runner.js --id 2 --scenarios orchestrator/test/scenarios.tests.json  # non-interactive
 ```
 Scenarios live in `orchestrator/test/scenarios.tests.json` — the file is
 **required**, passed with `--scenarios <path>` (no default). Each scenario
-carries
-its load profile in `options` — a single k6 v2 scenario definition, e.g.
-`{ "executor": "constant-vus", "vus": 50, "duration": "50s" }` — an optional
-`env` (a **sibling** of `options`, not a k6 field — data files are uploaded to
-the workers and passed as `__ENV` vars, e.g. `CSV_FILE_PATH`), and the script it
-targets; the runner wraps the single scenario under the `default` name into the
-`scenarios` map the API expects (`scenarioOptions`), which splits it over the
-workers and sends each its share as the `K6_SCENARIO_OPTIONS` `__ENV` variable
-(the script reads it with `options.scenarios = JSON.parse(__ENV.K6_SCENARIO_OPTIONS)`),
-and archives `report.json` + `report.html` + `manifest.md`. While the test runs, it joins the orchestrator's dashboard socket
-room (the plain web-console profile, no `workerId`) and prints each selected
-worker's k6 stdout/stderr live, line by line.
+carries its load profile in `options` (a single k6 v2 scenario definition,
+e.g. `{ "executor": "constant-vus", "vus": 50, "duration": "50s" }`), an
+optional `env` (a **sibling** of `options`, not a k6 field — data files are
+uploaded to the workers and passed as `__ENV` vars, e.g. `CSV_FILE_PATH`), and
+the script it targets. The runner wraps the single scenario under the
+`default` name into the `scenarios` map the API expects (`scenarioOptions`),
+which splits it over the workers and sends each its share as the
+`K6_SCENARIO_OPTIONS` `__ENV` variable (the script reads it with
+`options.scenarios = JSON.parse(__ENV.K6_SCENARIO_OPTIONS)`).
 
 ---
 
-## Startup
+## Web console & API
 
-At startup, the orchestrator serves the web console on **`http://<IP_ORCHESTRATEUR>:3000`**.
-The console is a **React / Next.js** application (`web/` folder, split per
-component — see §6.1): the static build (`web/out`) is served by Express, on
-the same origin as the API and Socket.io. It lets you:
+At startup, the orchestrator serves the web console on
+**`http://<IP_ORCHESTRATOR>:3000`** — a React / Next.js application (`web/`
+folder, component split in `web/README.md`), whose static build (`web/out`)
+is served by Express on the same origin as the API and Socket.io. It lets you:
 
-* **Watch live charts** (k6 web-dashboard style): summary cards
-  (VUS, req/s, failed/s, checks %, iterations/s, data received/sent) with
-  sparklines, then HTTP req/s + failed/s charts, data B/s, VUS and checks %.
-  Each chart carries the **fusion curve** (all workers) **and one curve
-  per worker** (dashed): **checkboxes** under each chart
-  let you show/hide every series; hovering shows the value of every
-  visible series at time t. A global **Curves** control
-   (Merged / Per worker / All, default Merged) presets which curves are
-   shown — a manual checkbox still wins per series.
-* **Explore metrics**: a selector lists every metric produced by
-  k6 (e.g. `http_req_duration`, `http_req_failed`…); for each one, an
-  avg + p95 chart (fusion **and an avg/p95 curve per worker**) and a
-  statistics table (count, rate, avg, p70/p80/p90/p95/p99, min, max) with **one row
-  per source** (fusion + one per worker).
-* **Inspect per-worker logs**: every agent has its own tab (no
-  concatenation), with millisecond timestamps and `STDOUT`/`STDERR` type.
-* **Start a test** (k6 script **pasted** or **pointed to by a `.js` path**,
-  **targeted workers** — per-worker checkboxes, default all, *All / None*,
-  **load profile** — the k6 v2 `scenarios` map as JSON, split by the
-  orchestrator over the targeted workers and sent to each as the
-  `K6_SCENARIO_OPTIONS` `__ENV` variable, optional **data files** (CSV, etc.))
-  and **stop** a test as an emergency stop, directly from the interface. The path is read on
-  the orchestrator's machine, then injected as-is to the targeted workers;
-  the data files are uploaded to the workers' tmp dir, next to the script, so
-  relative paths in the script (e.g. `open('./data.csv')`) work as in a local
-  run.
-* **Download the session report**:
-  * **`.html`** — a **self-contained** page: interactive SVG charts (with a tooltip showing
-    the value at time t on hover) for the main series **and every metric**
-    (avg + p95), with the fusion curve **and one curve per worker** — checkboxes
-    per chart to show/hide every series. Summary,
-    **all-metrics** table (count, rate, min, avg, p70/p80/p90/p95/p99, max), and
-    per-worker logs, and a footer with the project's GitHub link.
-    Opens in a browser, no server required.
-  * **`.json`** — the full report: totals (requests, failed %, data, checks),
-    final statistics for every metric (percentiles included), the
-    per-second timestamped series (reconstructable as charts, with the **per
-    worker** values in `byWorker`), the final statistics **per worker**, and the
-    per-worker logs.
-  * **`.txt`** — the human-readable summary (session, exit code per worker, **per-worker
-    metrics** (VUS, requests, failures, data, iterations), global summary, metrics,
-    logs).
-  * **`Raw k6 JSON` (`.jsonl`)** — the raw `--out json=` output of every worker,
-    line by line (metadata + data points, JSON Lines format), re-downloadable
-    per session **and per worker** via the "Report" strip selector.
-
-  The 10 most recent sessions stay selectable in the dropdown of the
-  "Report" strip.
+* **Watch live charts** (k6 web-dashboard style): summary cards (VUS, req/s,
+  failed/s, checks %, iterations/s, data received/sent) with sparklines, then
+  per-second charts (req/s + failed/s, data B/s, VUS, checks %). Every chart
+  draws the **fusion curve** (all workers) **and one curve per worker**
+  (dashed); checkboxes + a global **Curves** mode (Merged / Per worker / All,
+  default Merged) control which series are shown. The displayed VUS are the
+  **sum of every worker's active VUS**.
+* **Explore metrics**: every k6 metric (e.g. `http_req_duration`) gets an
+  avg + p95 chart and a statistics table (count, rate, avg,
+  p70/p80/p90/p95/p99, min, max) with one row per source (fusion + one per
+  worker).
+* **Inspect per-worker logs**: one tab per worker (no concatenation),
+  millisecond timestamps, `STDOUT`/`STDERR`.
+* **Start a test**: k6 script **pasted** or **pointed to by a `.js` path**
+  (read on the orchestrator's machine, then injected as-is to the targeted
+  workers), **targeted workers** (per-worker checkboxes, default all,
+  All / None), **load profile** (the k6 v2 `scenarios` map as JSON — split
+  over the targeted workers and sent to each as the `K6_SCENARIO_OPTIONS`
+  `__ENV` variable), optional **data files** (uploaded next to the ephemeral
+  script so relative paths in the script, e.g. `open('./data.csv')`, work as
+  in a local run) — and **stop** a test as an emergency stop.
+* **Download the session report** (the 10 most recent sessions stay selectable
+  in the "Report" strip):
+  * **`.html`** — self-contained page: interactive SVG charts for the main
+    series and every metric (avg + p95), fusion + per-worker curves with
+    show/hide checkboxes, all-metrics table, per-worker logs; opens in a
+    browser, no server required.
+  * **`.json`** — full report: totals, final statistics for every metric
+    (percentiles included), per-second timestamped series (per-worker values
+    in `byWorker`), final statistics per worker, per-worker logs.
+  * **`.txt`** — human-readable summary (session, exit code per worker,
+    per-worker metrics, global summary, logs).
+  * **Raw k6 JSON (`.jsonl`)** — the raw `--out json=` output of every worker
+    (JSON Lines), re-downloadable per session and per worker.
 * **Follow worker state** (Available / Busy) in real time.
 
-### Raw k6 metrics (`worker:metrics`)
+Behind the live charts: the worker streams k6's raw data points
+(`worker:metrics`); the orchestrator aggregates them **in memory** — globally
+(fusion) and per worker — and broadcasts a snapshot per second
+(`ui:metrics`); k6 console logs keep arriving via `worker:log` (see
+`docs/architecture.md` §5).
 
-To feed the charts, the worker runs k6 with **`--out json=<ephemeral
-file>`**: every k6 data point (one JSON line per request/metric)
-is re-read line by line by the worker, then streamed to the orchestrator via the
-`worker:metrics` socket event (`{ data: [ { metric, data: { value, count } } ] }`).
-The orchestrator aggregates the values (rate/second, min/max, percentiles over a
-sliding window of 5,000 values) **globally (fusion of every worker) and per
-worker**, and broadcasts a snapshot per second (`ui:metrics`) to the console: it carries
-the fusion curve **and one curve per worker**, with the show/hide
-checkboxes. The displayed VUS are the **sum of every worker's active VUS**.
-k6 console logs keep arriving via `worker:log`.
-
-### Additional HTTP API (reports & sessions)
+### HTTP API (reports & sessions)
 
 | Method | Route                        | Description                                                        |
 |--------|------------------------------|------------------------------------------------------------------|
-| GET    | `/api/test/sessions`         | List of the 10 most recent sessions (status, VUS, duration, max VUS, workers) |
-| GET    | `/api/test/report`           | JSON report of the running session (or the last one)             |
+| GET    | `/api/test/sessions`         | The 10 most recent sessions (status, VUS, duration, max VUS, workers) |
+| GET    | `/api/test/report`           | JSON report of the running session (or the last one)              |
 | GET    | `/api/test/report?format=txt`| Text report (summary) of the running session                       |
-| GET    | `/api/test/report?format=html`| Self-contained HTML report (SVG charts + every metric)       |
-| GET    | `/api/test/report?session=`  | Report of a specific session (id `sess-…`)               |
-| GET    | `/api/raw-metrics`           | Raw k6 JSON output of a worker (`?session=&worker=`, JSON Lines) |
-| POST   | `/api/test/start`            | Start a distributed test (optional `workerIds`, optional `attachments` data files; 409 if a test is already running) |
-| POST   | `/api/test/stop`             | Emergency stop of all tests                                  |
+| GET    | `/api/test/report?format=html`| Self-contained HTML report                                  |
+| GET    | `/api/test/report?session=`  | Report of a specific session (id `sess-…`)                        |
+| GET    | `/api/raw-metrics`           | Raw k6 JSON of a worker (`?session=&worker=`, JSON Lines)         |
+| POST   | `/api/test/start`            | Start a distributed test (optional `workerIds`, `attachments` data files) |
+| POST   | `/api/test/stop`             | Emergency stop of all tests                                       |
 
 > **Note:** only one test runs at a time. If a session is still in progress
 > (e.g. after an emergency stop, as long as k6 has not emitted its exit code),
