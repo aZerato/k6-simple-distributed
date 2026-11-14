@@ -40,7 +40,7 @@ no state machine — the process only speaks the socket protocol.
 
 | Event                   | Payload                                    | Worker action                       |
 |-------------------------|--------------------------------------------|-------------------------------------|
-| `orchestrator:start_test` | `{ scriptContent, vus + duration \| startVUs + stages, envVariables, attachments }` | Writes the tmp script + uploaded data files, spawns k6 (refused if busy) |
+| `orchestrator:start_test` | `{ scriptContent, envVariables, attachments }` (the load profile is the `K6_SCENARIO_OPTIONS` entry of `envVariables`, a JSON string — this worker's share of the `scenarios` map) | Writes the tmp script + uploaded data files, spawns k6 with `env` (refused if busy) |
 | `orchestrator:stop_test` | —                                       | `SIGINT` to the running k6 process  |
 
 **Outbound** (worker → orchestrator):
@@ -58,19 +58,16 @@ no state machine — the process only speaks the socket protocol.
 
 * **No shell:** `spawn(k6, […], { shell: false })` — command operators
   (`;`, `&&`, `|`) are never evaluated.
-* **Sanitized arguments:** the load profile is built for the k6 v2 CLI —
-  constant-vus: `--vus <n> --duration <d>` (`vus` force-cast with `parseInt`,
-  fallback `1`; `duration` must match `/^[0-9]+[smh]$/`, fallback `10s`);
-  ramping-vus: `--vus <startVUs>` (force-cast, fallback `0`) plus one
-  `--stage <d>:<t>` per stage, every `duration`/`target` validated by a
-  strict regex.
-* **Per-test working directory:** `WORKER_TMP_DIR` (default: `os.tmpdir()`)
-  is the working directory of this worker instance; each received test
-  creates `test-<timestamp>-<pid>/` inside it (script + data files +
-  `metrics.json`), and the whole directory is deleted at test end. The
-   `<pid>` suffix keeps two worker instances from sharing a directory
-   when a test reaches them in the same millisecond (one file, two k6
-   writers = corrupted metrics).
+* **No profile CLI arguments:** the k6 CLI only ever receives the fixed
+  `run`, `--out json=<tmpfile>` and the script path; the load profile rides in
+  `envVariables` as the `K6_SCENARIO_OPTIONS` variable (this worker's share of
+  the `scenarios` map, JSON string), which the script reads with
+  `options.scenarios = JSON.parse(__ENV.K6_SCENARIO_OPTIONS)`.
+* **Per-test working directory:** `WORKER_TMP_DIR` (default: `os.tmpdir()`);
+  each received test creates `test-<timestamp>-<pid>/` inside it (script +
+  data files + `metrics.json`), and the whole directory is deleted at test
+  end — the `<pid>` suffix keeps two worker instances from sharing a
+  directory.
 * **Sandboxed script:** the received script is written as-is into the
   per-test working directory; k6 is the JS sandbox (no access to the host's
   Node.js APIs).
@@ -80,11 +77,10 @@ no state machine — the process only speaks the socket protocol.
   deleted at test end.
 * `K6_NO_USAGE_REPORT=true` disables k6's telemetry.
 * One test at a time: a `start_test` while BUSY answers `worker:error`.
-* **Spawn failure:** if the k6 process cannot even start (binary missing from
-  the PATH…), Node emits `error` — never `close` — so the worker closes the
-  test itself: final drain, working-directory cleanup, `worker:test_finished`
-  (exit code `-1`), back to AVAILABLE (otherwise it would stay BUSY and the
-  session RUNNING forever).
+* **Spawn failure:** if k6 cannot start (binary missing from the PATH…),
+  Node emits `error` — never `close` — so the worker closes the test itself:
+  final drain, cleanup, `worker:test_finished` (exit code `-1`), back to
+  AVAILABLE.
 
 ## Metrics pipeline
 

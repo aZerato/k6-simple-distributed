@@ -1,40 +1,38 @@
-// Scenario runner — launches a k6 scenario from scenarios.tests.json through the
-// orchestrator API, streams the workers' live k6 logs on the console, waits for
-// the test to finish, retrieves the reports, and archives
-// (report.json + report.html + manifest.md) under <project root>/tmp/<id>_<name>_<timestamp>/.
-//
-// The scenario `options` (the load profile) is passed as JSON to the API,
-// because k6 v2 ignores the script's `options` (the profile is CLI-driven):
-// constant-vus -> totalVus/duration, ramping-vus -> startVUs/stages. The
-// `env` field is mapped to k6 `__ENV` vars; values that are paths to real
-// files are also uploaded as data files (basename) so the script can
-// `open()` them like a local run.
-//
-// Usage:
-//   node orchestrator/test/scenario-runner.js                 # interactive (prompt for an id)
-//   node orchestrator/test/scenario-runner.js --id 2          # non-interactive
-//   node orchestrator/test/scenario-runner.js --id 2 --dry-run # print the request, no POST
-//   ORCHESTRATOR_URL=http://host:3000 node orchestrator/test/scenario-runner.js
-
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { createRequire } from 'node:module';
 import readline from 'node:readline/promises';
-import { io as connectSocket } from 'socket.io-client';
-import { parseDurationSeconds } from '../utils.js';
+import { scenarioDurationSeconds } from '../orchestrator/profile.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const ROOT = path.resolve(__dirname, '../..');          // project root
-const SCENARIOS_FILE = path.join(__dirname, 'scenarios.tests.json');
-const TMP_DIR = path.join(ROOT, 'tmp');
+const ROOT = path.resolve(__dirname, '..');
+const { io: connectSocket } = createRequire(path.join(ROOT, 'orchestrator', 'package.json'))('socket.io-client');
+
 const base = (process.env.ORCHESTRATOR_URL || 'http://localhost:3000').replace(/\/+$/, '');
 
 const argv = process.argv.slice(2);
 const dryRun = argv.includes('--dry-run');
 const idIdx = argv.indexOf('--id');
 const presetId = idIdx >= 0 ? argv[idIdx + 1] : null;
+const scenIdx = argv.indexOf('--scenarios');
+const scenArg = argv[scenIdx + 1];
+if (scenIdx < 0 || !scenArg || scenArg.startsWith('--')) {
+  console.error('Missing required parameter: --scenarios <path>.');
+  process.exit(1);
+}
+const SCENARIOS_FILE = path.resolve(scenArg);
+const reportsDirIdx = argv.indexOf('--reportsDir');
+let REPORTS_DIR = path.join(ROOT, 'tmp');
+if (reportsDirIdx >= 0) {
+  const p = argv[reportsDirIdx + 1];
+  if (!p || p.startsWith('--')) {
+    console.error('Missing path after "--reportsDir".');
+    process.exit(1);
+  }
+  REPORTS_DIR = path.resolve(p);
+}
 
-// --- small helpers ---
 function nomFromScript(name) {
   return path.basename(name).split('.')[0].replace(/[^\w-]+/g, '_');
 }
@@ -44,11 +42,6 @@ function timestamp() {
 }
 async function getJson(url) { return (await fetch(url)).json(); }
 
-// --- Live k6 worker logs ---
-// The orchestrator relays every worker's k6 stdout/stderr to the "dashboard"
-// room as `ui:log` (the same channel the web console uses). We join that room
-// as a plain web console — no `workerId` in the handshake — and print, line by
-// line, the logs of the session we started.
 let followSessionId = null;
 function connectLogSocket() {
   const socket = connectSocket(base);
@@ -63,22 +56,14 @@ function connectLogSocket() {
   return socket;
 }
 
-// Build the /api/test/start request from a scenario.
-// The load profile is passed as JSON (k6 v2 ignores the script's `options`):
-//   - constant-vus -> totalVus + duration
-//   - ramping-vus  -> startVUs + stages
-// The `env` field becomes k6 `__ENV` variables; values that are real files on
-// disk are also uploaded as data files (basename) so the script can `open()`
-// them like a local run.
 function buildRequest(scenario) {
-  const scriptRel = scenario.name;
+  const scriptRel = scenario.script;
   const scriptAbs = path.isAbsolute(scriptRel) ? scriptRel : path.join(ROOT, scriptRel);
   const scriptContent = fs.readFileSync(scriptAbs, 'utf8');
 
-  // env -> `__ENV` variables; a value that is a real file on disk is uploaded
-  // (basename) AND passed as the env var name.
+  const env = scenario.env || {};
   const envVariables = {}, attachments = {};
-  for (const [key, value] of Object.entries(scenario.env || {})) {
+  for (const [key, value] of Object.entries(env)) {
     const v = String(value);
     const abs = path.isAbsolute(v) ? v : path.join(ROOT, v);
     if (fs.existsSync(abs) && fs.statSync(abs).isFile()) {
@@ -90,15 +75,12 @@ function buildRequest(scenario) {
     }
   }
 
-  // The load profile as JSON, straight from the scenario `options`.
-  const o = scenario.options || {};
-  const profile = o.executor === 'constant-vus'
-    ? { totalVus: o.vus, duration: o.duration }
-    : { startVUs: o.startVUs || 0, stages: o.stages || [] };
+  const opts = scenario.options || {};
+  const scenarioOptions = opts.executor ? { default: opts } : opts;
 
   return {
-    scriptContent, ...profile, envVariables, attachments,
-    _meta: { scriptRel, scriptAbs, executor: o.executor || 'constant-vus', profile }
+    scriptContent, scenarioOptions, envVariables, attachments,
+    _meta: { scriptRel, scriptAbs, scenarioOptions }
   };
 }
 
@@ -127,25 +109,23 @@ function buildManifest(scenario, req, start, report, folderName) {
   const sess = report.session || {};
   const codes = (report.workers || []).map((w) => `${w.id}=${w.exitCode}`).join(', ');
   const checksPct = report.totals && report.totals.checksPct != null ? report.totals.checksPct.toFixed(1) + ' %' : '—';
-  const profileLabel = req._meta.executor === 'constant-vus'
-    ? `constant-vus (${req.totalVus} VUs, ${req.duration})`
-    : `ramping-vus (start ${req.startVUs} VUs, ${req.stages.length} stage(s))`;
-  return `# Manifest — scenario ${scenario.id}
+  const profileLabel = Object.entries(req.scenarioOptions)
+    .map(([n, sc]) => `${n} (${sc.executor})`).join(', ');
+  return `# Manifest — scenario ${scenario.id} 
 
 **Scenario:** ${scenario.scenario}
 **Script:** \`${scenario.name}\` (resolved: \`${req._meta.scriptAbs}\`)
 **Folder:** \`${folderName}\`
 
 ## Test parameters
-- **Executor:** \`${req._meta.executor}\`
-- **Profile (sent):** \`${profileLabel}\`
+- **Scenarios:** \`${profileLabel}\`
 - **Env (\`__ENV\`):** \`${JSON.stringify(req.envVariables)}\`
 - **Data files (uploaded):** ${Object.keys(req.attachments).length ? Object.keys(req.attachments).map((n) => `\`${n}\``).join(', ') : 'none'}
 - **Targeted workers:** ${start.workerIds ? start.workerIds.join(', ') : '(default: every available worker)'}
 
 ## Load profile (sent to the API as JSON)
 \`\`\`json
-${JSON.stringify(req._meta.profile, null, 2)}
+${JSON.stringify(req.scenarioOptions, null, 2)}
 \`\`\`
 
 ## Execution
@@ -164,9 +144,13 @@ ${JSON.stringify(req._meta.profile, null, 2)}
 }
 
 async function main() {
+  if (!fs.existsSync(SCENARIOS_FILE)) {
+    console.error(`No scenarios file at: ${SCENARIOS_FILE}`);
+    process.exitCode = 1;
+    return;
+  }
   const scenarios = JSON.parse(fs.readFileSync(SCENARIOS_FILE, 'utf8'));
 
-  // --- pick the scenario ---
   let scenario;
   if (presetId != null) {
     scenario = scenarios.find((s) => String(s.id) === String(presetId));
@@ -181,14 +165,13 @@ async function main() {
     if (!scenario) { console.log(`No scenario with id "${ans}".`); process.exitCode = 1; return; }
   }
 
-  // --- build the request ---
   let req;
   try { req = buildRequest(scenario); } catch (e) { console.error(`Cannot build the request: ${e.message}`); process.exitCode = 1; return; }
 
   if (dryRun) {
     console.log('--- DRY RUN (no POST) ---');
     console.log(`script     : ${req._meta.scriptRel}`);
-    console.log(`profile    : ${JSON.stringify(req._meta.profile)}`);
+    console.log(`profile    : ${JSON.stringify(req.scenarioOptions)}`);
     console.log(`env        : ${JSON.stringify(req.envVariables)}`);
     console.log(`attachments: ${Object.keys(req.attachments).join(', ') || '(none)'}`);
     console.log('--- script (as-is, no options injection) ---');
@@ -196,16 +179,13 @@ async function main() {
     return;
   }
 
-  // --- start ---
-  const logSocket = connectLogSocket(); // live k6 logs from the workers
+  const logSocket = connectLogSocket();
   const res = await fetch(`${base}/api/test/start`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       scriptContent: req.scriptContent,
-      ...(req._meta.executor === 'constant-vus'
-        ? { totalVus: req.totalVus, duration: req.duration }
-        : { startVUs: req.startVUs, stages: req.stages }),
+      scenarioOptions: req.scenarioOptions,
       envVariables: req.envVariables,
       attachments: req.attachments
     })
@@ -217,32 +197,26 @@ async function main() {
     process.exitCode = 1;
     return;
   }
-  followSessionId = start.sessionId; // the socket now prints only our session's lines
+  followSessionId = start.sessionId;
   const startedAt = new Date();
   console.log(`Test started — session ${start.sessionId} — workers: ${start.workerIds.join(', ')}`);
   console.log('Live worker logs (k6 stdout/stderr, relayed by the orchestrator):');
 
-  // --- wait for completion ---
-  const expectedSecs = scenario.options && scenario.options.executor === 'constant-vus'
-    ? parseDurationSeconds(scenario.options.duration)
-    : (scenario.options.stages || []).reduce((a, s) => a + parseDurationSeconds(s.duration), 0);
+  const expectedSecs = Object.values(req.scenarioOptions).reduce((a, sc) => Math.max(a, scenarioDurationSeconds(sc)), 0);
   await waitForFinish(start.sessionId, (expectedSecs * 1.5 + 60) * 1000);
-  logSocket.disconnect(); // no more live logs needed
+  logSocket.disconnect();
 
-  // --- retrieve the report ---
   const reportRes = await fetch(`${base}/api/test/report?session=${start.sessionId}`);
   if (!reportRes.ok) { console.error(`Cannot fetch the report (HTTP ${reportRes.status}).`); process.exitCode = 1; return; }
   const reportText = await reportRes.text();
   const report = JSON.parse(reportText);
 
-  // Self-contained HTML report (same endpoint, format=html)
   const htmlRes = await fetch(`${base}/api/test/report?session=${start.sessionId}&format=html`);
   if (!htmlRes.ok) { console.error(`Cannot fetch the HTML report (HTTP ${htmlRes.status}).`); process.exitCode = 1; return; }
   const htmlText = await htmlRes.text();
 
-  // --- archive: folder + report.json + report.html + manifest.md ---
   const folderName = `${scenario.id}_${nomFromScript(scenario.name)}_${timestamp()}`;
-  const folder = path.join(TMP_DIR, folderName);
+  const folder = path.join(REPORTS_DIR, folderName);
   fs.mkdirSync(folder, { recursive: true });
   fs.writeFileSync(path.join(folder, 'report.json'), reportText);
   fs.writeFileSync(path.join(folder, 'report.html'), htmlText);

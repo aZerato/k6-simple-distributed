@@ -1,7 +1,8 @@
 [
   {
     "id": "1",
-    "name": "./orchestrator/test/basic.test.js",
+    "name": "basic test",
+    "script": "./orchestrator/test/basic.test.js",
     "scenario": "Description of the scenario 1",
     "options": {
       "executor": "ramping-vus",
@@ -15,7 +16,8 @@
   },
   {
     "id": "2",
-    "name": "./orchestrator/test/basic.test.js",
+    "name": "basic test",
+    "script": "./orchestrator/test/basic.test.js",
     "scenario": "Description of the scenario 2",
     "options": {
       "executor": "constant-vus",
@@ -25,7 +27,8 @@
   },
   {
     "id": "3",
-    "name": "./orchestrator/test/csv.test.js",
+    "name": "csv test",
+    "script": "./orchestrator/test/csv.test.js",
     "scenario": "Description of the scenario 3",
     "options": {
       "executor": "constant-vus",
@@ -38,7 +41,8 @@
   },
   {
     "id": "4",
-    "name": "./orchestrator/test/csv.test.js",
+    "name": "csv test",
+    "script": "./orchestrator/test/csv.test.js",
     "scenario": "Description of the scenario 4",
     "options": {
       "executor": "ramping-vus",
@@ -51,6 +55,21 @@
     },
     "env": {
       "CSV_FILE_PATH": "./orchestrator/test/data2.csv"
+    }
+  },
+  {
+    "id": "5",
+    "name": "basic test",
+    "script": "./orchestrator/test/basic.test.js",
+    "scenario": "Description of the scenario 5",
+    "options": {
+      "executor": "shared-iterations",
+      "startTime": "10s",
+      "gracefulStop": "5s",
+      "tags": { "example_tag": "testing" },
+      "vus": 10,
+      "iterations": 200,
+      "maxDuration": "10s"
     }
   }
 ]

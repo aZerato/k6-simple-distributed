@@ -10,6 +10,7 @@ wires express + socket.io and starts listening; everything else is imported:
 | `constants.js`  | Memory / console caps (sessions, logs, percentiles, raw JSON)    |
 | `utils.js`      | Shared formatting (timestamps, bytes, k6-style durations)            |
 | `state.js`      | In-memory registry: workers + sessions, source of truth for the current session and console broadcasts |
+| `profile.js`    | k6 v2 load-profile handling: per-worker splitting of the `scenarios` map, session totals (peak VUS / duration), validation |
 | `metrics.js`    | k6 aggregation (`MetricAgg`, percentiles, raw), fusion **+ per worker**, per-second snapshot (`ui:metrics`) |
 | `workers.js`    | Worker events: per-worker k6 logs (line buffer) + end-of-test close-out |
 | `scripts.js`    | k6 script validation (rejects Node.js module imports)         |

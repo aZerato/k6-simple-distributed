@@ -36,8 +36,8 @@ The system is based on an agent model continuously connected to the orchestrator
 ## 2. Test Lifecycle (WebSocket Flow)
 
 1. **Connection & registration:** At startup, the Node.js worker connects to the orchestrator (Socket.io, auth `{ workerId }`) and announces itself with `worker:ready` (`{ status }`); the link is self-healing (infinite reconnection, 2 s delay).
-2. **Test order (`orchestrator:start_test`):** The orchestrator sends each **targeted worker** a JSON payload `{ scriptContent, vus, duration, envVariables, attachments }` — the payload carries the **load profile** tailored to that worker: `vus` + `duration` (constant-vus) or `startVUs` + `stages` (ramping-vus); the VUS are distributed **only across the targeted workers** (see §2.1), and `attachments` carries the uploaded data files (see §2.2).
-3. **Secure execution:** The worker creates a **per-test working directory** — `test-<timestamp>-<pid>/` inside its ephemeral files directory (`WORKER_TMP_DIR` env var, default: the OS temp dir; the `<pid>` suffix keeps two worker instances from sharing a directory on same-millisecond starts) — and writes the JS script, the uploaded data files, when any, and the raw metrics output there (next to each other, so relative paths in the script resolve like a local run), sanitizes the arguments, and launches k6 in isolation (`{ shell: false }`), then announces `worker:status_changed` (`BUSY`). The whole directory is deleted at the end of the test. A refusal (already busy, missing script, invalid data file) is answered with `worker:error`.
+2. **Test order (`orchestrator:start_test`):** The orchestrator sends each **targeted worker** a JSON payload `{ scriptContent, envVariables, attachments }`. The **load profile** is not a top-level field: it rides inside `envVariables` as the `K6_SCENARIO_OPTIONS` variable — a JSON string carrying that worker's share of the k6 v2 `scenarios` map (see §2.1) — which the script reads with `options.scenarios = JSON.parse(__ENV.K6_SCENARIO_OPTIONS)`. `attachments` carries the uploaded data files (see §2.2).
+3. **Secure execution:** The worker creates a **per-test working directory** — `test-<timestamp>-<pid>/` inside its ephemeral files directory (`WORKER_TMP_DIR` env var, default: the OS temp dir; the `<pid>` suffix keeps two worker instances from sharing a directory) — writes the script, the uploaded data files (when any) and the raw metrics output next to each other (so relative paths in the script resolve like a local run), and launches k6 in isolation (`{ shell: false }`), then announces `worker:status_changed` (`BUSY`). The directory is deleted at test end. A refusal (busy, missing script, invalid data file) is answered with `worker:error`.
 4. **Real-time upload (`worker:log`):** Every `stdout`/`stderr` chunk produced by k6 is pushed over the WebSocket to the orchestrator for live display.
 5. **Raw metrics (`worker:metrics`):** In parallel, k6 writes its data points to an ephemeral file (`--out json=`), which the worker re-reads line by line and batches to the orchestrator (see §5).
 6. **Emergency stop (`orchestrator:stop_test`):** The orchestrator can interrupt the test at any time; the worker sends `SIGINT` to the k6 process.
@@ -50,11 +50,16 @@ The system is based on an agent model continuously connected to the orchestrator
 * **absent / empty** → every **available** worker (backward compatible);
 * unknown worker → `400`, worker not available → `422`, empty selection → `422`.
 
-The VUS are fairly distributed **only across the targeted workers** (the
-first one receives the remainder of the division); for a ramping-vus profile
-the same split is applied to `startVUs` and to the `target` of every stage.
-A worker that would receive 0 VU at its peak is simply not targeted, and if
-no worker can be targeted the request answers `422`. The response carries the selection back
+The **load profile** — a k6 v2 `scenarios` map (`scenarioOptions` in the
+request body) — is fairly split **only across the targeted workers**: every
+numeric field of each scenario (`vus`, `startVUs`, the `target` of every
+stage, `iterations`, `rate`, `preAllocatedVUs`, `maxVUs`) is divided over the
+workers, the first one receiving the remainder of each division, so the
+shares always sum back to the original value (see `orchestrator/profile.js`).
+Each worker gets its split `scenarios` map serialized as the
+`K6_SCENARIO_OPTIONS` env var. A worker that would receive 0 VU at its peak
+is simply not targeted, and if no worker can be targeted the request answers
+`422`. The response carries the selection back
 (`workersCibles` + `workerIds`). In the web console, each worker has a
 checkbox (default: all) with *All / None* shortcuts, and "Start" is
 disabled when none is selected.
@@ -78,15 +83,15 @@ orchestrator's disk):
 
 Relative paths in the script therefore behave exactly like a local `k6 run`:
 upload `data.csv` and keep `open('./data.csv')` unchanged. A script can also
-take the file name from the environment — e.g. `open(__ENV.CSV_FILE_PATH)` — so
-one script runs against different data files; the scenario runner
-(`orchestrator/test/scenario-runner.js`) does exactly that: it uploads each
-scenario's data files and passes their names as `__ENV` variables. The same
-runner sends the scenario's load profile as JSON to the API — in k6 v2 the
-profile is CLI-only (see §4), so no `options` are injected into the script.
-While the test runs, the runner also joins the orchestrator's dashboard socket
-room (the plain web-console profile, no `workerId`) and prints each selected
-worker's k6 stdout/stderr live on the console, line by line.
+take the file name from the environment — e.g. `open(__ENV.CSV_FILE_PATH)` —
+so one script runs against different data files.
+
+The scenario runner (`cli/scenario-runner.js`, see `cli/README.md`) does
+exactly that: it uploads each scenario's data files and passes their names as
+`__ENV` variables, sends the scenario's `options` (wrapped under the `default`
+name into the `scenarios` map the API expects) and, while the test runs, joins
+the orchestrator's dashboard socket room (no `workerId`) to print each
+selected worker's k6 stdout/stderr live.
 
 ---
 
@@ -95,7 +100,7 @@ worker's k6 stdout/stderr live on the console, line by line.
 To forbid the execution of malicious system commands (e.g. `rm -rf /` or `curl http://malicious...`), the worker's Express/Node.js code applies the following strict rules:
 
 * **No intermediate Shell:** The k6 process is instantiated via `child_process.spawn('k6', [...])` with the `{ shell: false }` option. This prevents the injection of command operators such as `;`, `&&`, or `|`.
-* **Argument sanitization:** The arguments passed to k6 (such as the duration or the number of VUs) are explicitly cast (e.g. `parseInt()`) or validated by a strict Regex before being injected into the command.
+* **Argument sanitization:** The only arguments the worker ever passes to k6 are the fixed `run`, `--out json=<file>` and the script path (all internal, no user input); the load profile is not a CLI argument — it rides in the `K6_SCENARIO_OPTIONS` env var (see §4), and the script's `__ENV` values are strings k6 hands to the JS sandbox, never shell-evaluated.
 * **Ephemeral JS file:** The received JavaScript script is written as-is into the worker's per-test working directory (`WORKER_TMP_DIR`, default: the OS temp dir). k6 acting as a JavaScript sandbox (with no access to the host system's native Node.js APIs such as `fs` or `child_process`), the script cannot compromise the worker's machine.
 
 ---
@@ -107,21 +112,22 @@ Each agent ships a lightweight Node.js application combining **Express** (for he
 ### Conceptual example of the execution in the Worker:
 
 ```javascript
-// Secure extraction and control of the parameters received from the orchestrator
-const safeVus = String(parseInt(payload.vus)); // Forces an integer
-const safeDuration = /^[0-9]+[smh]$/.test(payload.duration) ? payload.duration : '10s'; // Validates the format (e.g. 5m, 30s)
+// The load profile is NOT built as a CLI argument: it arrives in
+// `payload.envVariables.K6_SCENARIO_OPTIONS` (a JSON string — this worker's
+// share of the `scenarios` map), which the script reads with
+// `options.scenarios = JSON.parse(__ENV.K6_SCENARIO_OPTIONS)`.
 
 // Secure writing of the received k6 script
 fs.writeFileSync('/tmp/test_load.js', payload.scriptContent);
 
-// Secure launch (no shell, arguments encapsulated in an array)
+// Secure launch (no shell, arguments encapsulated in an array).
+// Only fixed, internal flags — the profile flows through `__ENV`, never the CLI.
+const k6Env = { ...process.env, ...payload.envVariables }; // K6_SCENARIO_OPTIONS in there
 const k6Process = spawn('k6', [
   'run',
-  '--vus', safeVus,
-  '--duration', safeDuration,
   '--out', 'json=/tmp/metrics.json', // raw data points, re-read and streamed
   '/tmp/test_load.js'
-], { shell: false });
+], { shell: false, env: k6Env });
 
 // Capture and real-time streaming of the outputs to the orchestrator
 k6Process.stdout.on('data', (data) => {
@@ -136,11 +142,6 @@ k6Process.on('close', (code) => {
   socket.emit('worker:test_finished', { exitCode: code });
 });
 ```
-
-> **k6 v2:** the load profile is **CLI-only** — the script's `options` are
-> ignored. The worker builds `--vus <n> --duration <d>` for a constant-vus
-> profile, or `--vus <startVUs> --stage <d>:<t> …` for a ramping-vus one
-> (one `--stage` per stage, in order).
 
 ---
 
@@ -167,4 +168,4 @@ A global **"Curves"** control (segmented button above the charts) switches the d
 | **Per worker** | One curve per worker (no fusion)  |
 | **All**      | Fusion + every worker               |
 
-Switching mode resets the per-chart checkboxes, but a manual checkbox always wins over the mode (per-series override). The canvases are observed (`ResizeObserver`) and re-drawn on resize, so the curves render correctly without a manual window resize.
+Switching mode resets the per-chart checkboxes, but a manual checkbox always wins over the mode (per-series override).

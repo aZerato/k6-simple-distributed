@@ -1,7 +1,0 @@
-{
-  "scriptContent": "export default function () {}",
-  "startVUs": 0,
-  "stages": [
-    { "duration": "abc", "target": "x" }
-  ]
-}

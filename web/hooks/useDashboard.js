@@ -399,12 +399,22 @@ export function useDashboard() {
 
   /* ---------- Controls: form, stop, clear, downloads ---------- */
 
-  const submitTest = async ({ scriptPath, scriptContent, totalVus, duration, workerIds, attachments }) => {
+  const submitTest = async ({ scriptPath, scriptContent, profileJson, workerIds, attachments }) => {
     setSubmitting(true);
     setFormStatus({ cls: '', text: 'Sending…' });
     // The script is either pasted or pointed to by a .js file (read by the orchestrator)
     if (!scriptPath && !scriptContent) {
       setFormStatus({ cls: 'err', text: 'No script: paste k6 code or point to a .js file.' });
+      setSubmitting(false);
+      return;
+    }
+    // The load profile is a k6 v2 `scenarios` map (JSON); the orchestrator
+    // splits it over the targeted workers and sends it as the K6_SCENARIO_OPTIONS env var.
+    let scenarioOptions;
+    try {
+      scenarioOptions = JSON.parse(profileJson);
+    } catch {
+      setFormStatus({ cls: 'err', text: 'Invalid load profile: the "Load profile" field must be valid JSON.' });
       setSubmitting(false);
       return;
     }
@@ -415,7 +425,7 @@ export function useDashboard() {
       setSubmitting(false);
       return;
     }
-    const payload = { totalVus, duration };
+    const payload = { scenarioOptions };
     if (workerIds) payload.workerIds = workerIds;
     if (scriptPath) payload.scriptPath = scriptPath;
     else payload.scriptContent = scriptContent;
