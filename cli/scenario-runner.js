@@ -16,15 +16,12 @@ const dryRun = argv.includes('--dry-run');
 const idIdx = argv.indexOf('--id');
 const presetId = idIdx >= 0 ? argv[idIdx + 1] : null;
 const scenIdx = argv.indexOf('--scenarios');
-let SCENARIOS_FILE = path.join(ROOT, 'orchestrator', 'test', 'scenarios.tests.json');
-if (scenIdx >= 0) {
-  const p = argv[scenIdx + 1];
-  if (!p || p.startsWith('--')) {
-    console.error('Missing path after "--scenarios".');
-    process.exit(1);
-  }
-  SCENARIOS_FILE = path.resolve(p);
+const scenArg = argv[scenIdx + 1];
+if (scenIdx < 0 || !scenArg || scenArg.startsWith('--')) {
+  console.error('Missing required parameter: --scenarios <path>.');
+  process.exit(1);
 }
+const SCENARIOS_FILE = path.resolve(scenArg);
 const reportsDirIdx = argv.indexOf('--reportsDir');
 let REPORTS_DIR = path.join(ROOT, 'tmp');
 if (reportsDirIdx >= 0) {

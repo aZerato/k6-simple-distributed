@@ -107,11 +107,12 @@ finish, then archive `report.json` + `report.html` + a `manifest.md` under
 `tmp/<id>_<name>_<timestamp>/` (archive directory override: `--reportsDir <path>`)
 — use the scenario runner:
 ```shell
-node cli/scenario-runner.js            # interactive (prompt for an id)
-node cli/scenario-runner.js --id 2     # non-interactive
+node cli/scenario-runner.js --scenarios orchestrator/test/scenarios.tests.json         # interactive (prompt for an id)
+node cli/scenario-runner.js --id 2 --scenarios orchestrator/test/scenarios.tests.json  # non-interactive
 ```
-Scenarios live in `orchestrator/test/scenarios.tests.json` (any other file:
-`--scenarios <path>`). Each scenario carries
+Scenarios live in `orchestrator/test/scenarios.tests.json` — the file is
+**required**, passed with `--scenarios <path>` (no default). Each scenario
+carries
 its load profile in `options` — a single k6 v2 scenario definition, e.g.
 `{ "executor": "constant-vus", "vus": 50, "duration": "50s" }` — an optional
 `env` (a **sibling** of `options`, not a k6 field — data files are uploaded to
