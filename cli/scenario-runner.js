@@ -1,44 +1,41 @@
-// Scenario runner — launches a k6 scenario from scenarios.tests.json through the
-// orchestrator API, streams the workers' live k6 logs on the console, waits for
-// the test to finish, retrieves the reports, and archives
-// (report.json + report.html + manifest.md) under <project root>/tmp/<id>_<name>_<timestamp>/.
-//
-// The scenario `options` is a single k6 v2 scenario definition (one
-// `executor` per test); the runner wraps it under the `default` name into
-// the `scenarios` map the API expects (`scenarioOptions`), which splits it
-// over the workers and sends each its share as the `K6_SCENARIO_OPTIONS`
-// `__ENV` variable. The script reads it with
-// `options.scenarios = JSON.parse(__ENV.K6_SCENARIO_OPTIONS)`. The `env`
-// field (a sibling of `options`, not a k6 scenario field) lists the data
-// files to upload (and their `__ENV` names) — values that are paths to real
-// files are uploaded as data files (basename) so the script can `open()`
-// them like a local run.
-//
-// Usage:
-//   node orchestrator/test/scenario-runner.js                 # interactive (prompt for an id)
-//   node orchestrator/test/scenario-runner.js --id 2          # non-interactive
-//   node orchestrator/test/scenario-runner.js --id 2 --dry-run # print the request, no POST
-//   ORCHESTRATOR_URL=http://host:3000 node orchestrator/test/scenario-runner.js
-
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { createRequire } from 'node:module';
 import readline from 'node:readline/promises';
-import { io as connectSocket } from 'socket.io-client';
-import { scenarioDurationSeconds } from '../profile.js';
+import { scenarioDurationSeconds } from '../orchestrator/profile.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const ROOT = path.resolve(__dirname, '../..');          // project root
-const SCENARIOS_FILE = path.join(__dirname, 'scenarios.tests.json');
-const TMP_DIR = path.join(ROOT, 'tmp');
+const ROOT = path.resolve(__dirname, '..');
+const { io: connectSocket } = createRequire(path.join(ROOT, 'orchestrator', 'package.json'))('socket.io-client');
+
 const base = (process.env.ORCHESTRATOR_URL || 'http://localhost:3000').replace(/\/+$/, '');
 
 const argv = process.argv.slice(2);
 const dryRun = argv.includes('--dry-run');
 const idIdx = argv.indexOf('--id');
 const presetId = idIdx >= 0 ? argv[idIdx + 1] : null;
+const scenIdx = argv.indexOf('--scenarios');
+let SCENARIOS_FILE = path.join(ROOT, 'orchestrator', 'test', 'scenarios.tests.json');
+if (scenIdx >= 0) {
+  const p = argv[scenIdx + 1];
+  if (!p || p.startsWith('--')) {
+    console.error('Missing path after "--scenarios".');
+    process.exit(1);
+  }
+  SCENARIOS_FILE = path.resolve(p);
+}
+const reportsDirIdx = argv.indexOf('--reportsDir');
+let REPORTS_DIR = path.join(ROOT, 'tmp');
+if (reportsDirIdx >= 0) {
+  const p = argv[reportsDirIdx + 1];
+  if (!p || p.startsWith('--')) {
+    console.error('Missing path after "--reportsDir".');
+    process.exit(1);
+  }
+  REPORTS_DIR = path.resolve(p);
+}
 
-// --- small helpers ---
 function nomFromScript(name) {
   return path.basename(name).split('.')[0].replace(/[^\w-]+/g, '_');
 }
@@ -48,11 +45,6 @@ function timestamp() {
 }
 async function getJson(url) { return (await fetch(url)).json(); }
 
-// --- Live k6 worker logs ---
-// The orchestrator relays every worker's k6 stdout/stderr to the "dashboard"
-// room as `ui:log` (the same channel the web console uses). We join that room
-// as a plain web console — no `workerId` in the handshake — and print, line by
-// line, the logs of the session we started.
 let followSessionId = null;
 function connectLogSocket() {
   const socket = connectSocket(base);
@@ -67,20 +59,11 @@ function connectLogSocket() {
   return socket;
 }
 
-// Build the /api/test/start request from a scenario.
-// The scenario `options` is a single k6 v2 scenario definition (one `executor`
-// per test). k6 v2 needs `options.scenarios` to be a MAP `{ name: { executor, … } }`,
-// so the runner wraps the single scenario under the `default` name (an
-// already-mapped `options` is passed through). The `env` field — a sibling of
-// `options`, NOT a k6 scenario field — lists the data files to upload (and
-// their `__ENV` names); it is handled separately and never sent to the workers.
 function buildRequest(scenario) {
   const scriptRel = scenario.script;
   const scriptAbs = path.isAbsolute(scriptRel) ? scriptRel : path.join(ROOT, scriptRel);
   const scriptContent = fs.readFileSync(scriptAbs, 'utf8');
 
-  // `env` (a sibling of `options`) -> `__ENV` variables; a value that is a
-  // real file on disk is uploaded (basename) AND passed as the env var name.
   const env = scenario.env || {};
   const envVariables = {}, attachments = {};
   for (const [key, value] of Object.entries(env)) {
@@ -95,8 +78,6 @@ function buildRequest(scenario) {
     }
   }
 
-  // The load profile: the scenario `options`, wrapped into the `scenarios`
-  // map the API expects (single scenario -> `{ default: … }`).
   const opts = scenario.options || {};
   const scenarioOptions = opts.executor ? { default: opts } : opts;
 
@@ -166,9 +147,13 @@ ${JSON.stringify(req.scenarioOptions, null, 2)}
 }
 
 async function main() {
+  if (!fs.existsSync(SCENARIOS_FILE)) {
+    console.error(`No scenarios file at: ${SCENARIOS_FILE}`);
+    process.exitCode = 1;
+    return;
+  }
   const scenarios = JSON.parse(fs.readFileSync(SCENARIOS_FILE, 'utf8'));
 
-  // --- pick the scenario ---
   let scenario;
   if (presetId != null) {
     scenario = scenarios.find((s) => String(s.id) === String(presetId));
@@ -183,7 +168,6 @@ async function main() {
     if (!scenario) { console.log(`No scenario with id "${ans}".`); process.exitCode = 1; return; }
   }
 
-  // --- build the request ---
   let req;
   try { req = buildRequest(scenario); } catch (e) { console.error(`Cannot build the request: ${e.message}`); process.exitCode = 1; return; }
 
@@ -198,8 +182,7 @@ async function main() {
     return;
   }
 
-  // --- start ---
-  const logSocket = connectLogSocket(); // live k6 logs from the workers
+  const logSocket = connectLogSocket();
   const res = await fetch(`${base}/api/test/start`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -217,32 +200,26 @@ async function main() {
     process.exitCode = 1;
     return;
   }
-  followSessionId = start.sessionId; // the socket now prints only our session's lines
+  followSessionId = start.sessionId;
   const startedAt = new Date();
   console.log(`Test started — session ${start.sessionId} — workers: ${start.workerIds.join(', ')}`);
   console.log('Live worker logs (k6 stdout/stderr, relayed by the orchestrator):');
 
-  // --- wait for completion ---
-  // The `scenarios` map runs concurrently: the test ends when the longest
-  // scenario ends.
   const expectedSecs = Object.values(req.scenarioOptions).reduce((a, sc) => Math.max(a, scenarioDurationSeconds(sc)), 0);
   await waitForFinish(start.sessionId, (expectedSecs * 1.5 + 60) * 1000);
-  logSocket.disconnect(); // no more live logs needed
+  logSocket.disconnect();
 
-  // --- retrieve the report ---
   const reportRes = await fetch(`${base}/api/test/report?session=${start.sessionId}`);
   if (!reportRes.ok) { console.error(`Cannot fetch the report (HTTP ${reportRes.status}).`); process.exitCode = 1; return; }
   const reportText = await reportRes.text();
   const report = JSON.parse(reportText);
 
-  // Self-contained HTML report (same endpoint, format=html)
   const htmlRes = await fetch(`${base}/api/test/report?session=${start.sessionId}&format=html`);
   if (!htmlRes.ok) { console.error(`Cannot fetch the HTML report (HTTP ${htmlRes.status}).`); process.exitCode = 1; return; }
   const htmlText = await htmlRes.text();
 
-  // --- archive: folder + report.json + report.html + manifest.md ---
   const folderName = `${scenario.id}_${nomFromScript(scenario.name)}_${timestamp()}`;
-  const folder = path.join(TMP_DIR, folderName);
+  const folder = path.join(REPORTS_DIR, folderName);
   fs.mkdirSync(folder, { recursive: true });
   fs.writeFileSync(path.join(folder, 'report.json'), reportText);
   fs.writeFileSync(path.join(folder, 'report.html'), htmlText);

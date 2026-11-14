@@ -83,22 +83,27 @@ export function scenarioPeakVus(sc) {
   }
 }
 
-// Duration of one scenario, in seconds (scenarios run concurrently, so the
-// session duration is the max across scenarios, computed by the caller).
+// Wall-clock duration of one scenario, in seconds: the `startTime` wait
+// (if any), then the execution window, then the `gracefulStop` shutdown
+// period. Scenarios run concurrently, so the session duration is the max
+// across scenarios, computed by the caller.
 export function scenarioDurationSeconds(sc) {
+  let execution = 0;
   switch (sc.executor) {
     case 'constant-vus':
     case 'constant-arrival-rate':
-      return parseDurationSeconds(sc.duration);
+      execution = parseDurationSeconds(sc.duration);
+      break;
     case 'ramping-vus':
     case 'ramping-arrival-rate':
-      return sc.stages.reduce((a, s) => a + parseDurationSeconds(s.duration), 0);
+      execution = sc.stages.reduce((a, s) => a + parseDurationSeconds(s.duration), 0);
+      break;
     case 'shared-iterations':
     case 'per-vu-iterations':
-      return parseDurationSeconds(sc.maxDuration || '10m');
-    default:
-      return 0;
+      execution = parseDurationSeconds(sc.maxDuration || '10m');
+      break;
   }
+  return parseDurationSeconds(sc.startTime || '0s') + execution + parseDurationSeconds(sc.gracefulStop || '0s');
 }
 
 // Session-level totals of the (unsplit) profile:

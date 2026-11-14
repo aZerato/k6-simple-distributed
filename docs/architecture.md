@@ -85,7 +85,7 @@ Relative paths in the script therefore behave exactly like a local `k6 run`:
 upload `data.csv` and keep `open('./data.csv')` unchanged. A script can also
 take the file name from the environment — e.g. `open(__ENV.CSV_FILE_PATH)` — so
 one script runs against different data files; the scenario runner
-(`orchestrator/test/scenario-runner.js`) does exactly that: it uploads each
+(`cli/scenario-runner.js`, see `cli/README.md`) does exactly that: it uploads each
 scenario's data files and passes their names as `__ENV` variables. The same
 runner sends the scenario's `options` — a single k6 v2 scenario definition (the
 load profile) — wrapped under the `default` name into the `scenarios` map the

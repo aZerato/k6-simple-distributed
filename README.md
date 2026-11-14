@@ -104,12 +104,14 @@ the ready-to-run E2E fixtures: `node orchestrator/test/e2e/run.js` (see
 To run a **named scenario** end to end — pick an id, launch it via the API,
 follow every selected worker's live k6 logs on the console, wait for it to
 finish, then archive `report.json` + `report.html` + a `manifest.md` under
-`tmp/<id>_<name>_<timestamp>/` — use the scenario runner:
+`tmp/<id>_<name>_<timestamp>/` (archive directory override: `--reportsDir <path>`)
+— use the scenario runner:
 ```shell
-node orchestrator/test/scenario-runner.js            # interactive (prompt for an id)
-node orchestrator/test/scenario-runner.js --id 2     # non-interactive
+node cli/scenario-runner.js            # interactive (prompt for an id)
+node cli/scenario-runner.js --id 2     # non-interactive
 ```
-Scenarios live in `orchestrator/test/scenarios.tests.json`. Each scenario carries
+Scenarios live in `orchestrator/test/scenarios.tests.json` (any other file:
+`--scenarios <path>`). Each scenario carries
 its load profile in `options` — a single k6 v2 scenario definition, e.g.
 `{ "executor": "constant-vus", "vus": 50, "duration": "50s" }` — an optional
 `env` (a **sibling** of `options`, not a k6 field — data files are uploaded to
