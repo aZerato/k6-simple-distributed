@@ -5,7 +5,23 @@ A streamlined k6 test orchestrator with simplified workers designed for resource
 No kubernetes needed, only nodejs.
 You can run your tests via a web ui or via an API.
 
+## UI
+
+### Web
+
+An in-browser, real-time control room for the whole test: start or stop a run, target workers, set the load profile, and follow every worker's live k6 logs, metrics and charts as it happens.
+
 ![UI](./docs/img/ui.png)
+
+### CLI
+
+A one-command, browser-free way to run a named k6 scenario end to end — reproducible, scriptable, and CI-friendly — while streaming live k6 logs and archiving the reports automatically.
+
+![CLI](./docs/img/cli.png)
+
+### HTML Report
+
+A single, self-contained page of the full run — interactive SVG charts for the main series and every metric (avg + p95), fusion + per-worker curves, an all-metrics table and per-worker logs — that opens in any browser, no server required.
 
 ![HTML Report](./docs/img/report.png)
 
