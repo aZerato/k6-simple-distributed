@@ -5,6 +5,8 @@ const DEFAULT_SCRIPT = [
   "import http from 'k6/http';",
   "import { check, sleep } from 'k6';",
   '',
+  'export const options = { scenarios: JSON.parse(__ENV.K6_SCENARIO_OPTIONS) };',
+  '',
   'export default function () {',
   "  const res = http.get('https://k6.io');",
   "  check(res, {",
@@ -13,6 +15,12 @@ const DEFAULT_SCRIPT = [
   '  sleep(1);',
   '}'
 ].join('\n');
+
+// Default load profile: a k6 v2 `scenarios` map (JSON), split by the orchestrator
+// over the targeted workers and sent to each as the K6_SCENARIO_OPTIONS env var.
+const DEFAULT_PROFILE = JSON.stringify({
+  default: { executor: 'constant-vus', vus: 50, duration: '30s' }
+}, null, 2);
 
 const fmtBytes = (n) => (n < 1000 ? `${n} B` : n < 1e6 ? `${(n / 1e3).toFixed(1)} kB` : `${(n / 1e6).toFixed(2)} MB`);
 
@@ -32,8 +40,7 @@ const SCRIPT_HISTORY_MAX = 10;
 export default function TestForm({ formStatus, submitting, onSubmit, onStop, workers }) {
   const [scriptPath, setScriptPath] = useState('');
   const [script, setScript] = useState(DEFAULT_SCRIPT);
-  const [totalVus, setTotalVus] = useState('50');
-  const [duration, setDuration] = useState('30s');
+  const [profileJson, setProfileJson] = useState(DEFAULT_PROFILE);
   // workerId -> explicitly targeted. Absence (or `true`) = targeted: a worker
   // that (re)connects is ticked by default, so "all workers" stays the default.
   const [picks, setPicks] = useState({});
@@ -84,8 +91,7 @@ export default function TestForm({ formStatus, submitting, onSubmit, onStop, wor
           onSubmit({
             scriptPath: path,
             scriptContent: script,
-            totalVus: Math.max(1, parseInt(totalVus, 10) || 1),
-            duration: duration.trim() || '30s',
+            profileJson,
             workerIds: selected.map((w) => w.id),
             attachments: fileNames.length
               ? Object.fromEntries(fileNames.map((n) => [n, dataFiles[n].b64]))
@@ -122,16 +128,25 @@ export default function TestForm({ formStatus, submitting, onSubmit, onStop, wor
             onChange={(e) => setScript(e.target.value)}
           />
         </label>
-        <div className="field-row">
-          <label className="field">
-            <span className="field-label">Total VUS</span>
-            <input id="total-vus" type="number" min="1" value={totalVus} onChange={(e) => setTotalVus(e.target.value)} />
-          </label>
-          <label className="field">
-            <span className="field-label">Duration</span>
-            <input id="duration" type="text" value={duration} onChange={(e) => setDuration(e.target.value)} />
-          </label>
-        </div>
+        <label className="field">
+          <span className="field-label">Load profile (k6 <code>scenarios</code> JSON)</span>
+          <textarea
+            id="profile"
+            className="mono"
+            spellCheck="false"
+            rows={7}
+            value={profileJson}
+            onChange={(e) => setProfileJson(e.target.value)}
+          />
+          <span className="field-hint">
+            A k6 v2 <code>scenarios</code> map. The orchestrator splits it over the targeted
+            workers and sends each its share as the <code>K6_SCENARIO_OPTIONS</code> env var;
+            the script reads it with{' '}
+            <code>{'options = { scenarios: JSON.parse(__ENV.K6_SCENARIO_OPTIONS) }'}</code>.
+            Executors: <code>constant-vus</code>, <code>ramping-vus</code>, <code>shared-iterations</code>,{' '}
+            <code>per-vu-iterations</code>, <code>constant-arrival-rate</code>, <code>ramping-arrival-rate</code>.
+          </span>
+        </label>
         <div className="field">
           <span className="field-label">
             Data files (CSV, …)
@@ -191,7 +206,7 @@ export default function TestForm({ formStatus, submitting, onSubmit, onStop, wor
               ))}
             </div>
             <span className="field-hint">
-              The total VUS is distributed only over the targeted workers. Unticked workers stay idle.
+              The load profile is split only over the targeted workers. Unticked workers stay idle.
             </span>
           </div>
         </div>

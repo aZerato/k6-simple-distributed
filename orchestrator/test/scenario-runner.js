@@ -3,12 +3,16 @@
 // the test to finish, retrieves the reports, and archives
 // (report.json + report.html + manifest.md) under <project root>/tmp/<id>_<name>_<timestamp>/.
 //
-// The scenario `options` (the load profile) is passed as JSON to the API,
-// because k6 v2 ignores the script's `options` (the profile is CLI-driven):
-// constant-vus -> totalVus/duration, ramping-vus -> startVUs/stages. The
-// `env` field is mapped to k6 `__ENV` vars; values that are paths to real
-// files are also uploaded as data files (basename) so the script can
-// `open()` them like a local run.
+// The scenario `options` is a single k6 v2 scenario definition (one
+// `executor` per test); the runner wraps it under the `default` name into
+// the `scenarios` map the API expects (`scenarioOptions`), which splits it
+// over the workers and sends each its share as the `K6_SCENARIO_OPTIONS`
+// `__ENV` variable. The script reads it with
+// `options.scenarios = JSON.parse(__ENV.K6_SCENARIO_OPTIONS)`. The `env`
+// field (a sibling of `options`, not a k6 scenario field) lists the data
+// files to upload (and their `__ENV` names) — values that are paths to real
+// files are uploaded as data files (basename) so the script can `open()`
+// them like a local run.
 //
 // Usage:
 //   node orchestrator/test/scenario-runner.js                 # interactive (prompt for an id)
@@ -21,7 +25,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import readline from 'node:readline/promises';
 import { io as connectSocket } from 'socket.io-client';
-import { parseDurationSeconds } from '../utils.js';
+import { scenarioDurationSeconds } from '../profile.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '../..');          // project root
@@ -64,21 +68,22 @@ function connectLogSocket() {
 }
 
 // Build the /api/test/start request from a scenario.
-// The load profile is passed as JSON (k6 v2 ignores the script's `options`):
-//   - constant-vus -> totalVus + duration
-//   - ramping-vus  -> startVUs + stages
-// The `env` field becomes k6 `__ENV` variables; values that are real files on
-// disk are also uploaded as data files (basename) so the script can `open()`
-// them like a local run.
+// The scenario `options` is a single k6 v2 scenario definition (one `executor`
+// per test). k6 v2 needs `options.scenarios` to be a MAP `{ name: { executor, … } }`,
+// so the runner wraps the single scenario under the `default` name (an
+// already-mapped `options` is passed through). The `env` field — a sibling of
+// `options`, NOT a k6 scenario field — lists the data files to upload (and
+// their `__ENV` names); it is handled separately and never sent to the workers.
 function buildRequest(scenario) {
-  const scriptRel = scenario.name;
+  const scriptRel = scenario.script;
   const scriptAbs = path.isAbsolute(scriptRel) ? scriptRel : path.join(ROOT, scriptRel);
   const scriptContent = fs.readFileSync(scriptAbs, 'utf8');
 
-  // env -> `__ENV` variables; a value that is a real file on disk is uploaded
-  // (basename) AND passed as the env var name.
+  // `env` (a sibling of `options`) -> `__ENV` variables; a value that is a
+  // real file on disk is uploaded (basename) AND passed as the env var name.
+  const env = scenario.env || {};
   const envVariables = {}, attachments = {};
-  for (const [key, value] of Object.entries(scenario.env || {})) {
+  for (const [key, value] of Object.entries(env)) {
     const v = String(value);
     const abs = path.isAbsolute(v) ? v : path.join(ROOT, v);
     if (fs.existsSync(abs) && fs.statSync(abs).isFile()) {
@@ -90,15 +95,14 @@ function buildRequest(scenario) {
     }
   }
 
-  // The load profile as JSON, straight from the scenario `options`.
-  const o = scenario.options || {};
-  const profile = o.executor === 'constant-vus'
-    ? { totalVus: o.vus, duration: o.duration }
-    : { startVUs: o.startVUs || 0, stages: o.stages || [] };
+  // The load profile: the scenario `options`, wrapped into the `scenarios`
+  // map the API expects (single scenario -> `{ default: … }`).
+  const opts = scenario.options || {};
+  const scenarioOptions = opts.executor ? { default: opts } : opts;
 
   return {
-    scriptContent, ...profile, envVariables, attachments,
-    _meta: { scriptRel, scriptAbs, executor: o.executor || 'constant-vus', profile }
+    scriptContent, scenarioOptions, envVariables, attachments,
+    _meta: { scriptRel, scriptAbs, scenarioOptions }
   };
 }
 
@@ -127,25 +131,23 @@ function buildManifest(scenario, req, start, report, folderName) {
   const sess = report.session || {};
   const codes = (report.workers || []).map((w) => `${w.id}=${w.exitCode}`).join(', ');
   const checksPct = report.totals && report.totals.checksPct != null ? report.totals.checksPct.toFixed(1) + ' %' : '—';
-  const profileLabel = req._meta.executor === 'constant-vus'
-    ? `constant-vus (${req.totalVus} VUs, ${req.duration})`
-    : `ramping-vus (start ${req.startVUs} VUs, ${req.stages.length} stage(s))`;
-  return `# Manifest — scenario ${scenario.id}
+  const profileLabel = Object.entries(req.scenarioOptions)
+    .map(([n, sc]) => `${n} (${sc.executor})`).join(', ');
+  return `# Manifest — scenario ${scenario.id} 
 
 **Scenario:** ${scenario.scenario}
 **Script:** \`${scenario.name}\` (resolved: \`${req._meta.scriptAbs}\`)
 **Folder:** \`${folderName}\`
 
 ## Test parameters
-- **Executor:** \`${req._meta.executor}\`
-- **Profile (sent):** \`${profileLabel}\`
+- **Scenarios:** \`${profileLabel}\`
 - **Env (\`__ENV\`):** \`${JSON.stringify(req.envVariables)}\`
 - **Data files (uploaded):** ${Object.keys(req.attachments).length ? Object.keys(req.attachments).map((n) => `\`${n}\``).join(', ') : 'none'}
 - **Targeted workers:** ${start.workerIds ? start.workerIds.join(', ') : '(default: every available worker)'}
 
 ## Load profile (sent to the API as JSON)
 \`\`\`json
-${JSON.stringify(req._meta.profile, null, 2)}
+${JSON.stringify(req.scenarioOptions, null, 2)}
 \`\`\`
 
 ## Execution
@@ -188,7 +190,7 @@ async function main() {
   if (dryRun) {
     console.log('--- DRY RUN (no POST) ---');
     console.log(`script     : ${req._meta.scriptRel}`);
-    console.log(`profile    : ${JSON.stringify(req._meta.profile)}`);
+    console.log(`profile    : ${JSON.stringify(req.scenarioOptions)}`);
     console.log(`env        : ${JSON.stringify(req.envVariables)}`);
     console.log(`attachments: ${Object.keys(req.attachments).join(', ') || '(none)'}`);
     console.log('--- script (as-is, no options injection) ---');
@@ -203,9 +205,7 @@ async function main() {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       scriptContent: req.scriptContent,
-      ...(req._meta.executor === 'constant-vus'
-        ? { totalVus: req.totalVus, duration: req.duration }
-        : { startVUs: req.startVUs, stages: req.stages }),
+      scenarioOptions: req.scenarioOptions,
       envVariables: req.envVariables,
       attachments: req.attachments
     })
@@ -223,9 +223,9 @@ async function main() {
   console.log('Live worker logs (k6 stdout/stderr, relayed by the orchestrator):');
 
   // --- wait for completion ---
-  const expectedSecs = scenario.options && scenario.options.executor === 'constant-vus'
-    ? parseDurationSeconds(scenario.options.duration)
-    : (scenario.options.stages || []).reduce((a, s) => a + parseDurationSeconds(s.duration), 0);
+  // The `scenarios` map runs concurrently: the test ends when the longest
+  // scenario ends.
+  const expectedSecs = Object.values(req.scenarioOptions).reduce((a, sc) => Math.max(a, scenarioDurationSeconds(sc)), 0);
   await waitForFinish(start.sessionId, (expectedSecs * 1.5 + 60) * 1000);
   logSocket.disconnect(); // no more live logs needed
 

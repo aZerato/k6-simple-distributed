@@ -1,7 +1,10 @@
 {
-  "scriptContent": "export default function () {}",
-  "startVUs": 0,
-  "stages": [
-    { "duration": "2s", "target": 4 }
-  ]
+  "scriptContent": "export const options = { scenarios: JSON.parse(__ENV.K6_SCENARIO_OPTIONS) }; export default function () {}",
+  "scenarioOptions": {
+    "default": {
+      "executor": "ramping-vus",
+      "startVUs": 0,
+      "stages": [ { "duration": "2s", "target": 4 } ]
+    }
+  }
 }

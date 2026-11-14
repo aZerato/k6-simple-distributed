@@ -110,12 +110,15 @@ node orchestrator/test/scenario-runner.js            # interactive (prompt for a
 node orchestrator/test/scenario-runner.js --id 2     # non-interactive
 ```
 Scenarios live in `orchestrator/test/scenarios.tests.json`. Each scenario carries
-its load profile in `options` (constant-vus: `vus` + `duration`, or ramping-vus:
-`startVUs` + `stages`), an optional `env` (data files are uploaded to the workers
-and passed as `__ENV` vars, e.g. `CSV_FILE_PATH`), and the script it targets; the
-runner sends the profile as JSON to the API (k6 v2 ignores the script's `options`
-— the profile is CLI-driven) and archives `report.json` + `report.html` +
-`manifest.md`. While the test runs, it joins the orchestrator's dashboard socket
+its load profile in `options` — a single k6 v2 scenario definition, e.g.
+`{ "executor": "constant-vus", "vus": 50, "duration": "50s" }` — an optional
+`env` (a **sibling** of `options`, not a k6 field — data files are uploaded to
+the workers and passed as `__ENV` vars, e.g. `CSV_FILE_PATH`), and the script it
+targets; the runner wraps the single scenario under the `default` name into the
+`scenarios` map the API expects (`scenarioOptions`), which splits it over the
+workers and sends each its share as the `K6_SCENARIO_OPTIONS` `__ENV` variable
+(the script reads it with `options.scenarios = JSON.parse(__ENV.K6_SCENARIO_OPTIONS)`),
+and archives `report.json` + `report.html` + `manifest.md`. While the test runs, it joins the orchestrator's dashboard socket
 room (the plain web-console profile, no `workerId`) and prints each selected
 worker's k6 stdout/stderr live, line by line.
 
@@ -146,8 +149,10 @@ the same origin as the API and Socket.io. It lets you:
   concatenation), with millisecond timestamps and `STDOUT`/`STDERR` type.
 * **Start a test** (k6 script **pasted** or **pointed to by a `.js` path**,
   **targeted workers** — per-worker checkboxes, default all, *All / None*,
-  total VUS, duration, optional **data files** (CSV, etc.)) and **stop** a
-  test as an emergency stop, directly from the interface. The path is read on
+  **load profile** — the k6 v2 `scenarios` map as JSON, split by the
+  orchestrator over the targeted workers and sent to each as the
+  `K6_SCENARIO_OPTIONS` `__ENV` variable, optional **data files** (CSV, etc.))
+  and **stop** a test as an emergency stop, directly from the interface. The path is read on
   the orchestrator's machine, then injected as-is to the targeted workers;
   the data files are uploaded to the workers' tmp dir, next to the script, so
   relative paths in the script (e.g. `open('./data.csv')`) work as in a local

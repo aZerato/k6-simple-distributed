@@ -40,7 +40,7 @@ no state machine — the process only speaks the socket protocol.
 
 | Event                   | Payload                                    | Worker action                       |
 |-------------------------|--------------------------------------------|-------------------------------------|
-| `orchestrator:start_test` | `{ scriptContent, vus + duration \| startVUs + stages, envVariables, attachments }` | Writes the tmp script + uploaded data files, spawns k6 (refused if busy) |
+| `orchestrator:start_test` | `{ scriptContent, envVariables, attachments }` (the load profile is the `K6_SCENARIO_OPTIONS` entry of `envVariables`, a JSON string — this worker's share of the `scenarios` map) | Writes the tmp script + uploaded data files, spawns k6 with `env` (refused if busy) |
 | `orchestrator:stop_test` | —                                       | `SIGINT` to the running k6 process  |
 
 **Outbound** (worker → orchestrator):
@@ -58,12 +58,13 @@ no state machine — the process only speaks the socket protocol.
 
 * **No shell:** `spawn(k6, […], { shell: false })` — command operators
   (`;`, `&&`, `|`) are never evaluated.
-* **Sanitized arguments:** the load profile is built for the k6 v2 CLI —
-  constant-vus: `--vus <n> --duration <d>` (`vus` force-cast with `parseInt`,
-  fallback `1`; `duration` must match `/^[0-9]+[smh]$/`, fallback `10s`);
-  ramping-vus: `--vus <startVUs>` (force-cast, fallback `0`) plus one
-  `--stage <d>:<t>` per stage, every `duration`/`target` validated by a
-  strict regex.
+* **No profile CLI arguments:** the k6 CLI only ever receives the fixed
+  `run`, `--out json=<tmpfile>` and the script path. The load profile is not
+  built as CLI arguments (a CLI `--vus`/`--stage` would override the script's
+  `options.scenarios` in k6 v2): it rides in `envVariables` as the
+  `K6_SCENARIO_OPTIONS` variable — this worker's share of the `scenarios` map,
+  as a JSON string — which the script reads with
+  `options.scenarios = JSON.parse(__ENV.K6_SCENARIO_OPTIONS)`.
 * **Per-test working directory:** `WORKER_TMP_DIR` (default: `os.tmpdir()`)
   is the working directory of this worker instance; each received test
   creates `test-<timestamp>-<pid>/` inside it (script + data files +

@@ -1,0 +1,4 @@
+{
+  "scriptContent": "export const options = { scenarios: JSON.parse(__ENV.K6_SCENARIO_OPTIONS) }; export default function () {}",
+  "scenarioOptions": { "default": { "executor": "not-a-real-executor" } }
+}

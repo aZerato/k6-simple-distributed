@@ -17,7 +17,7 @@ sparklines, tooltip) stays a dependency-free imperative engine, in
 | `lib/charts.js`                   | Canvas engine (grid, curves, sparklines, tooltip) + series defs       |
 | `components/TopBar.jsx`           | Top bar (brand, worker count, socket LED)                         |
 | `components/WorkersPanel.jsx`     | Worker list (status Available / Busy)                               |
-| `components/TestForm.jsx`         | Test launch (pasted script or `scriptPath` — recent paths suggested via `<datalist>`, targeted workers, data file upload, VUS, duration, stop) |
+| `components/TestForm.jsx`         | Test launch (pasted script or `scriptPath` — recent paths suggested via `<datalist>`, targeted workers, data file upload, load profile (k6 v2 `scenarios` JSON), stop) |
 | `components/Cards.jsx`            | Summary cards + canvas sparklines                                        |
 | `components/ChartsGrid.jsx`       | 4 main charts + series checkboxes + global "Curves" mode (merged / per worker / all) |
 | `components/MetricExplorer.jsx`   | Metric explorer: avg/p95 chart + per-source table              |

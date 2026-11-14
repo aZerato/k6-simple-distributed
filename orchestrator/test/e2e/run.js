@@ -61,12 +61,12 @@ async function waitIdle(timeoutMs = 10000) {
 }
 
 const cases = [
-  { file: 't_empty.json',     expect: 422, real: false }, // empty selection
-  { file: 't_unknown.json',   expect: 400, real: false }, // unknown worker
-  { file: 't_bad_stage.json', expect: 400, real: false }, // invalid ramping stage
-  { file: 't_all.json',       expect: 200, real: true },  // pasted script, all workers (constant profile)
-  { file: 't_all_real.json',  expect: 200, real: true },  // .js file, all workers (constant profile)
-  { file: 't_ramping.json',   expect: 200, real: true },  // ramping profile (startVUs + stages)
+  { file: 't_empty.json',       expect: 422, real: false }, // empty selection
+  { file: 't_unknown.json',    expect: 400, real: false }, // unknown worker
+  { file: 't_bad_profile.json', expect: 400, real: false }, // invalid profile (unknown executor)
+  { file: 't_all.json',        expect: 200, real: true },  // pasted script, all workers (constant-vus)
+  { file: 't_all_real.json',   expect: 200, real: true },  // .js file, all workers (constant-vus)
+  { file: 't_ramping.json',    expect: 200, real: true },  // ramping-vus profile
 ];
 
 let failures = 0;

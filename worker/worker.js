@@ -110,17 +110,23 @@ socket.on('orchestrator:start_test', (payload) => {
     return socket.emit('worker:error', { message: 'The worker is already busy with a test.' });
   }
 
-  const { scriptContent, vus, duration, startVUs, stages, envVariables, attachments } = payload;
+  const { scriptContent, envVariables, attachments } = payload;
 
   if (!scriptContent) {
     return socket.emit('worker:error', { message: 'The k6 script content is missing.' });
   }
 
-  // 1. The load profile is passed as JSON (k6 v2 ignores the script's `options`):
-  //    ramping-vus -> startVUs + stages | constant-vus -> vus + duration
-  const isRamping = Array.isArray(stages) && stages.length > 0;
-
-  console.log(`[Worker] Preparing the k6 test (${isRamping ? 'ramping-vus' : 'constant-vus'})`);
+  // 1. The load profile is NOT built as CLI arguments: it arrives in
+  //    `envVariables` as the `K6_SCENARIO_OPTIONS` variable (a JSON string —
+  //    this worker's share of the `scenarios` map), which the script reads
+  //    with `options.scenarios = JSON.parse(__ENV.K6_SCENARIO_OPTIONS)`.
+  let scenarioNames = '(none)';
+  try {
+    scenarioNames = Object.keys(JSON.parse(envVariables.K6_SCENARIO_OPTIONS)).join(', ') || '(none)';
+  } catch {
+    scenarioNames = '(unparsed)';
+  }
+  console.log(`[Worker] Preparing the k6 test (scenarios: ${scenarioNames})`);
   isRunning = true;
   socket.emit('worker:status_changed', { status: 'BUSY' });
 
@@ -194,29 +200,13 @@ socket.on('orchestrator:start_test', (payload) => {
   // 6. Isolated launch of k6 (shell: false prevents the evaluation of malicious strings)
   //    `--out json=`: the raw data points are written to a file,
   //    which we re-read line by line to feed the console charts.
+  //    No CLI load-profile arguments: the profile flows through the
+  //    `K6_SCENARIO_OPTIONS` env var (see step 1) — in k6 v2 a CLI profile
+  //    would override the script's `options.scenarios` entirely.
   const k6Binary = os.platform() === 'win32' ? 'k6.exe' : 'k6';
-
-  // Build the k6 v2 CLI from the profile (ramping or constant)
-  let profileArgs;
-  if (isRamping) {
-    const safeStart = String(parseInt(startVUs, 10) || 0);
-    profileArgs = ['--vus', safeStart];
-    for (const st of stages) {
-      const d = String(st && st.duration), t = String(st && st.target);
-      if (!/^[0-9]+[smh]$/.test(d) || !/^[0-9]+$/.test(t)) {
-        return failStart(`Invalid stage in the test order: ${JSON.stringify(st)}`);
-      }
-      profileArgs.push('--stage', `${d}:${t}`);
-    }
-  } else {
-    const safeVus = String(parseInt(vus, 10) || 1);
-    const safeDuration = /^[0-9]+[smh]$/.test(duration) ? duration : '10s';
-    profileArgs = ['--vus', safeVus, '--duration', safeDuration];
-  }
 
   currentK6Process = spawn(k6Binary, [
     'run',
-    ...profileArgs,
     '--out', `json=${metricsPath}`,
     scriptPath
   ], {

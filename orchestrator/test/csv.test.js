@@ -3,6 +3,10 @@ import { check, sleep } from 'k6';
 import { SharedArray } from 'k6/data';
 import papaparse from 'https://jslib.k6.io/papaparse/5.1.1/index.js';
 
+export const options = {
+  scenarios: JSON.parse(__ENV.K6_SCENARIO_OPTIONS)
+};
+
 // not using SharedArray here will mean that the code in the function call (that is what loads and
 // parses the csv) will be executed per each VU which also means that there will be a complete copy
 // per each VU

@@ -19,14 +19,14 @@ import {
 } from './state.js';
 import { findNodeBuiltinImport } from './scripts.js';
 import { MAX_ATTACHMENTS_TOTAL_BYTES } from './constants.js';
-import { parseDurationSeconds, formatSeconds } from './utils.js';
+import { splitScenarios, scenarioPeakVus, scenarioTotals, validateScenarios } from './profile.js';
 import { buildJsonReport } from './reports/json.js';
 import { buildTxtReport } from './reports/txt.js';
 import { buildHtmlReport } from './reports/html.js';
 
 export function registerRoutes(app, io) {
   app.post('/api/test/start', (req, res) => {
-    const { scriptContent, scriptPath, totalVus, duration, startVUs, stages, envVariables, workerIds, attachments } = req.body;
+    const { scriptContent, scriptPath, scenarioOptions, envVariables, workerIds, attachments } = req.body;
 
     // The script is pasted (`scriptContent`) or pointed to by a path (`scriptPath`):
     // the .js file is read on the orchestrator's machine (absolute path, or
@@ -59,19 +59,17 @@ export function registerRoutes(app, io) {
       });
     }
 
-    // The load profile is either constant (totalVus + duration) or ramping (startVUs + stages).
-    const isRamping = Array.isArray(stages) && stages.length > 0;
+    // The load profile: a k6 v2 `scenarios` map (`scenarioOptions`). It is
+    // split over the targeted workers and sent to each as the
+    // `K6_SCENARIO_OPTIONS` `__ENV` variable (a JSON string the script reads
+    // into `options.scenarios`) — no CLI profile arguments (in k6 v2 a CLI
+    // profile would override the script's `options.scenarios` entirely).
     if (!content) {
       return res.status(400).json({ error: 'Missing script (scriptContent or scriptPath).' });
     }
-    if (isRamping) {
-      for (const st of stages) {
-        if (!st || !/^[0-9]+[smh]$/.test(String(st.duration)) || !/^[0-9]+$/.test(String(st.target))) {
-          return res.status(400).json({ error: `Invalid stage: ${JSON.stringify(st)}. Each stage needs a "duration" (e.g. "2m") and an integer "target" (VUs).` });
-        }
-      }
-    } else if (!totalVus || !duration) {
-      return res.status(400).json({ error: 'Missing parameters: "totalVus" + "duration" (constant-vus) or "stages" (ramping-vus).' });
+    const profileError = validateScenarios(scenarioOptions);
+    if (profileError) {
+      return res.status(400).json({ error: profileError });
     }
 
     // Data files (CSV, etc.) referenced by relative path in the script
@@ -142,32 +140,24 @@ export function registerRoutes(app, io) {
       return res.status(422).json({ error: 'No worker is available at the moment.' });
     }
 
-    // Fair distribution of the Virtual Users (VUs) over the targeted workers.
-    // `share` splits an integer `total` over `workersCount` workers: the first worker
-    // takes the remainder of the division, so the shares always sum back to `total`.
+    // The numeric fields of every scenario (VUS / rates / iterations) are
+    // fairly split over the targeted workers: the first worker takes the
+    // remainder of each division, so the shares always sum back to the
+    // original value (see profile.js).
     const workersCount = targetWorkers.length;
-    const share = (total, index) => Math.floor(total / workersCount) + (index === 0 ? total % workersCount : 0);
 
-    // Session-level totals: the peak VUs and the overall duration of the profile.
-    const sessionTotalVus = isRamping ? Math.max(...stages.map((s) => s.target)) : totalVus;
-    const sessionDuration = isRamping
-      ? formatSeconds(stages.reduce((acc, s) => acc + parseDurationSeconds(s.duration), 0))
-      : duration;
+    // Session-level totals: the peak VUS and the overall duration of the (unsplit) profile.
+    const { totalVus: sessionTotalVus, duration: sessionDuration } = scenarioTotals(scenarioOptions);
 
     const session = createSession({ totalVus: sessionTotalVus, duration: sessionDuration });
 
     // Send the tailored start order to each targeted worker
     targetWorkers.forEach((worker, index) => {
       // The first worker takes the remainder of the division, if there is one
-      const profile = isRamping
-        ? {
-            startVUs: share(startVUs || 0, index),
-            stages: stages.map((s) => ({ duration: s.duration, target: share(s.target, index) }))
-          }
-        : { vus: share(totalVus, index), duration };
+      const split = splitScenarios(scenarioOptions, index, workersCount);
 
-      // The worker's peak VUs (a worker with none is not targeted)
-      const workerPeak = isRamping ? Math.max(...profile.stages.map((s) => s.target)) : profile.vus;
+      // The worker's peak VUS (a worker with none is not targeted)
+      const workerPeak = Object.values(split).reduce((m, sc) => Math.max(m, scenarioPeakVus(sc)), 0);
       if (workerPeak <= 0) return; // This worker has no VU to run: it is not targeted
 
       session.workers.set(worker.id, { exitCode: null, finishedAt: null, error: null });
@@ -175,9 +165,9 @@ export function registerRoutes(app, io) {
 
       io.to(worker.socketId).emit('orchestrator:start_test', {
         scriptContent: content,
-        ...profile,
         envVariables: {
           ...envVariables,
+          K6_SCENARIO_OPTIONS: JSON.stringify(split),
           ORCHESTRATOR_WORKER_ID: worker.id
         },
         attachments: dataFiles
@@ -188,7 +178,7 @@ export function registerRoutes(app, io) {
       sessions.shift(); // Discard the empty session
       setCurrentSession(null);
       return res.status(422).json({
-        error: 'Distribution impossible: the total VUS is lower than the number of targeted workers.'
+        error: 'Distribution impossible: the profile is lower than the number of targeted workers.'
       });
     }
 

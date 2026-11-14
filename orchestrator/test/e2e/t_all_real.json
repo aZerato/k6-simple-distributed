@@ -1,5 +1,4 @@
 {
   "scriptPath": "e2e_script.js",
-  "totalVus": 4,
-  "duration": "3s"
+  "scenarioOptions": { "default": { "executor": "constant-vus", "vus": 4, "duration": "3s" } }
 }
